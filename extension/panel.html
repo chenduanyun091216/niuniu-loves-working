@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>牛牛爱上班</title>
+  <link rel="stylesheet" href="panel.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <img src="icon.png" alt="">
+      <div>
+        <h1>牛牛爱上班</h1>
+        <span>接口调试</span>
+      </div>
+    </div>
+    <div class="topbar-meta">
+      <span id="request-count">0 个请求</span>
+      <label class="raw-toggle" title="显示未经 AES/Base64 解码的请求和响应">
+        <input id="raw-mode-toggle" type="checkbox" role="switch" aria-label="原始内容">
+        <span class="raw-toggle-track" aria-hidden="true"></span>
+        <span>原始内容</span>
+      </label>
+      <button id="open-settings" class="icon-button settings-button" type="button" title="解密设置" aria-label="解密设置">⚙</button>
+      <span class="author">作者 Mr.Chen</span>
+    </div>
+  </header>
+
+  <main class="workspace">
+    <aside class="request-sidebar">
+      <div class="list-toolbar">
+        <label class="search-box">
+          <span aria-hidden="true">⌕</span>
+          <input id="request-search" type="search" placeholder="筛选接口" aria-label="筛选接口">
+        </label>
+        <button id="clear-requests" class="icon-button" type="button" title="清空请求" aria-label="清空请求">清空</button>
+      </div>
+      <div class="list-heading"><span>Name</span></div>
+      <div id="request-list" class="request-list" role="listbox" aria-label="接口请求">
+        <div class="list-empty">正在读取请求…</div>
+      </div>
+    </aside>
+    <div id="resize-divider" class="resize-divider" role="separator" aria-orientation="vertical" aria-label="调整接口列表宽度" tabindex="0"></div>
+
+    <section class="details" aria-label="请求详情">
+      <div id="details-empty" class="details-empty">
+        <div class="empty-mark">↗</div>
+        <strong>选择一个接口查看详情</strong>
+        <span>打开本面板后刷新页面以捕获全部请求</span>
+      </div>
+      <div id="details-view" class="details-view" hidden>
+        <div class="request-summary">
+          <div class="summary-line">
+            <span id="detail-method" class="method-pill">GET</span>
+            <strong id="detail-url" class="detail-url"></strong>
+          </div>
+          <div class="summary-meta">
+            <span id="detail-status"></span>
+            <span id="detail-duration"></span>
+            <span id="response-state" class="response-state"></span>
+          </div>
+        </div>
+        <nav class="detail-tabs" aria-label="请求信息">
+          <button type="button" data-tab="headers" class="active">Headers</button>
+          <button type="button" data-tab="payload">Payload</button>
+          <button type="button" data-tab="preview">Preview</button>
+          <button type="button" data-tab="response">Response</button>
+        </nav>
+        <div id="detail-content" class="detail-content"></div>
+      </div>
+    </section>
+  </main>
+
+  <dialog id="settings-dialog" class="settings-dialog" aria-labelledby="settings-title">
+    <form id="settings-form">
+      <h2 id="settings-title">解密设置</h2>
+      <label class="settings-field" for="aes-key">
+        <span>AES 密钥</span>
+        <input id="aes-key" type="password" autocomplete="off" spellcheck="false" required>
+      </label>
+      <p class="settings-hint">密钥只保存在此扩展的本地配置中。UTF-8 长度需为 16、24 或 32 字节。</p>
+      <p id="settings-error" class="settings-error" role="alert" hidden></p>
+      <div class="settings-actions">
+        <button id="reset-default-key" class="secondary-button" type="button">恢复默认</button>
+        <span class="settings-spacer"></span>
+        <button id="cancel-settings" class="secondary-button" type="button">取消</button>
+        <button class="primary-button" type="submit">保存</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="vendor/crypto-js.js"></script>
+  <script type="module" src="panel.js"></script>
+</body>
+</html>

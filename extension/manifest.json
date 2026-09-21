@@ -1,0 +1,15 @@
+{
+  "manifest_version": 3,
+  "name": "牛牛爱上班",
+  "version": "1.0.0",
+  "description": "查看网页接口并解密格式化 JSON 响应",
+  "devtools_page": "devtools.html",
+  "icons": {
+    "128": "icon.png"
+  },
+  "action": {
+    "default_title": "牛牛爱上班",
+    "default_popup": "popup.html",
+    "default_icon": "icon.png"
+  }
+}

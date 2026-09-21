@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>牛牛爱上班 · API 测试站</title>
+  <link rel="stylesheet" href="/test/test.css">
+</head>
+<body>
+  <main class="page-shell">
+    <header class="topbar">
+      <div class="brand-mark" aria-hidden="true">牛</div>
+      <div>
+        <p class="eyebrow">LOCAL TEST SITE</p>
+        <h1>牛牛爱上班 <span>API 测试站</span></h1>
+      </div>
+      <span class="local-badge"><i></i>仅本机</span>
+    </header>
+
+    <section class="intro-card">
+      <div>
+        <p class="eyebrow">EXTENSION CHECK</p>
+        <h2>点按钮发请求，在面板里查看结果</h2>
+        <p>先打开本页的开发者工具并选择「牛牛爱上班」，然后运行下面的接口样例。</p>
+      </div>
+      <button id="run-all" class="primary-button" type="button">运行全部样例 <span aria-hidden="true">→</span></button>
+    </section>
+
+    <section class="endpoint-grid" aria-label="接口样例">
+      <article class="endpoint-card">
+        <div class="card-heading"><span class="method get">GET</span><span class="endpoint-kind">原始 JSON</span></div>
+        <h3>未加密响应</h3>
+        <code>/api/plain?source=button</code>
+        <p>返回普通 JSON，验证插件不会误解密，并能显示响应内容。</p>
+        <button class="run-button" data-run="plain" type="button">发送 GET 请求</button>
+      </article>
+
+      <article class="endpoint-card featured">
+        <div class="card-heading"><span class="method get">GET</span><span class="endpoint-kind encrypted">AES 加密</span></div>
+        <h3>加密响应</h3>
+        <code>/api/encrypted?source=button</code>
+        <p>返回与插件 <code>extension/crypto.js</code> 密钥匹配的 Base64 密文，解密后是 JSON。</p>
+        <button class="run-button" data-run="encrypted" type="button">发送 GET 请求</button>
+      </article>
+
+      <article class="endpoint-card featured">
+        <div class="card-heading"><span class="method get">GET</span><span class="endpoint-kind encrypted">部分字段 AES</span></div>
+        <h3>部分加密响应</h3>
+        <code>/api/partial?source=button</code>
+        <p>仅 <code>data</code> 是密文；验证插件只解密密文字段并保留普通字段。</p>
+        <button class="run-button" data-run="partial" type="button">发送 GET 请求</button>
+      </article>
+
+      <article class="endpoint-card featured">
+        <div class="card-heading"><span class="method post">POST</span><span class="endpoint-kind encrypted">Base64 参数/响应</span></div>
+        <h3>Base64 参数样例</h3>
+        <code>/api/base64?filter=MT0x</code>
+        <p>Query、嵌套 JSON 和响应中包含 Base64 值，验证解码并保留普通文本。</p>
+        <button class="run-button" data-run="base64" type="button">发送 POST 请求</button>
+      </article>
+
+      <article class="endpoint-card">
+        <div class="card-heading"><span class="method post">POST</span><span class="endpoint-kind">Header + Payload</span></div>
+        <h3>请求回显</h3>
+        <code>/api/echo?source=button</code>
+        <p>发送自定义 Header 和 JSON Payload，服务器以普通 JSON 回显。</p>
+        <button class="run-button" data-run="echo" type="button">发送 POST 请求</button>
+      </article>
+    </section>
+
+    <section class="results-section">
+      <div class="results-heading">
+        <div>
+          <p class="eyebrow">SERVER RESPONSE</p>
+          <h2>测试页收到的原始响应</h2>
+        </div>
+        <button id="clear-results" class="text-button" type="button">清空</button>
+      </div>
+      <div id="results" class="results-list" aria-live="polite">
+        <div class="empty-state">还没有请求。选择一个样例，或运行全部样例。</div>
+      </div>
+    </section>
+
+    <footer>FastAPI 本地服务 · 作者 Mr.Chen</footer>
+  </main>
+  <script src="/test/test.js"></script>
+</body>
+</html>
