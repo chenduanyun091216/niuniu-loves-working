@@ -17,7 +17,7 @@
     </div>
     <div class="topbar-meta">
       <span id="request-count">0 个请求</span>
-      <label class="raw-toggle" title="显示未经 AES/Base64 解码的请求和响应">
+      <label class="raw-toggle" title="显示未经解密或解码的请求和响应">
         <input id="raw-mode-toggle" type="checkbox" role="switch" aria-label="原始内容">
         <span class="raw-toggle-track" aria-hidden="true"></span>
         <span>原始内容</span>
@@ -62,11 +62,11 @@
           </div>
         </div>
         <nav class="detail-tabs" aria-label="请求信息">
-          <button type="button" data-tab="headers" class="active"><span class="tab-icon" aria-hidden="true">☷</span><span>Headers</span></button>
-          <button type="button" data-tab="payload"><span class="tab-icon" aria-hidden="true">⇩</span><span>Payload</span></button>
-          <button type="button" data-tab="preview"><span class="tab-icon" aria-hidden="true">◉</span><span>Preview</span></button>
-          <button type="button" data-tab="response"><span class="tab-icon" aria-hidden="true">▤</span><span>Response</span></button>
-          <button type="button" data-tab="sql"><span class="tab-icon" aria-hidden="true">⌘</span><span>获取SQL</span></button>
+          <button type="button" data-tab="headers" class="active"><svg class="tab-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M5 3.5h8M5 8h8M5 12.5h8"></path><path d="M2.5 3.5h.01M2.5 8h.01M2.5 12.5h.01"></path></svg><span>Headers</span></button>
+          <button type="button" data-tab="payload"><svg class="tab-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M8 2.5v7"></path><path d="m5.2 6.8 2.8 2.8 2.8-2.8"></path><path d="M3.5 11.5v1.2A1.3 1.3 0 0 0 4.8 14h6.4a1.3 1.3 0 0 0 1.3-1.3v-1.2"></path></svg><span>Payload</span></button>
+          <button type="button" data-tab="preview"><svg class="tab-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M1.8 8s2.1-3.7 6.2-3.7S14.2 8 14.2 8s-2.1 3.7-6.2 3.7S1.8 8 1.8 8Z"></path><circle cx="8" cy="8" r="1.6"></circle></svg><span>Preview</span></button>
+          <button type="button" data-tab="response"><svg class="tab-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M4 1.8h5l3 3v9.4H4z"></path><path d="M9 1.8v3h3M6 8h4M6 10.5h4"></path></svg><span>Response</span></button>
+          <button type="button" data-tab="sql"><svg class="tab-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><ellipse cx="8" cy="3.2" rx="4.7" ry="1.7"></ellipse><path d="M3.3 3.2v4.6c0 1 2.1 1.7 4.7 1.7s4.7-.7 4.7-1.7V3.2M3.3 7.8v4.6c0 1 2.1 1.7 4.7 1.7s4.7-.7 4.7-1.7V7.8"></path></svg><span>获取SQL</span></button>
         </nav>
         <div id="detail-content" class="detail-content"></div>
         <div id="response-search" class="response-search" hidden>
@@ -82,8 +82,17 @@
   <dialog id="settings-dialog" class="settings-dialog" aria-labelledby="settings-title">
     <form id="settings-form">
       <h2 id="settings-title">解密设置</h2>
+      <label class="settings-field" for="encryption-method">
+        <span>解密方式</span>
+        <select id="encryption-method">
+          <option value="aes-ecb">AES（ECB / PKCS7）</option>
+          <option value="des-ecb">DES（ECB / PKCS7）</option>
+          <option value="3des-ecb">3DES（ECB / PKCS7）</option>
+          <option value="base64">Base64（仅解码）</option>
+        </select>
+      </label>
       <label class="settings-field" for="aes-key">
-        <span>AES 密钥</span>
+        <span>解密密钥</span>
         <input id="aes-key" type="password" autocomplete="off" spellcheck="false" required>
       </label>
       <label class="settings-field" for="theme-select">
@@ -93,7 +102,7 @@
           <option value="dark">暗色主题</option>
         </select>
       </label>
-      <p class="settings-hint">密钥和主题只保存在此扩展的本地配置中。UTF-8 长度需为 16、24 或 32 字节。</p>
+      <p class="settings-hint">解密方式、密钥和主题只保存在此扩展的本地配置中。</p>
       <p id="settings-error" class="settings-error" role="alert" hidden></p>
       <div class="settings-actions">
         <button id="reset-default-key" class="secondary-button" type="button">恢复默认</button>

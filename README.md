@@ -8,11 +8,11 @@ Chrome Manifest V3 扩展，用于查看当前网页的接口请求，并在本�
 2. 打开需要调试的网页，再打开开发者工具。
 3. 选择开发者工具顶部的「牛牛爱上班」面板，然后刷新网页以捕获完整请求。
 
-工具栏图标会显示使用提示。面板通过 Chrome DevTools Network API 读取当前检查页面的请求，不申请站点访问权限。AES 解密在浏览器本地执行。
+工具栏图标会显示使用提示。面板通过 Chrome DevTools Network API 读取当前检查页面的请求，不申请站点访问权限。解密在浏览器本地执行。
 
-Payload 面板会尝试解密 Query、Form Data 和 JSON 请求体中的 AES 密文或 Base64 文本；Response 会递归处理 JSON 对象和数组中的字段，也支持整段 AES/Base64 响应。普通文本、无效 Base64 和密钥不匹配的值保持原样。AES 解密使用面板「解密设置」中的密钥，默认使用 `crypto.js` 内置密钥；自定义密钥只保存在扩展本地。`Preview` 显示结构化内容，`Response` 显示格式化后的响应。
+Payload 面板会尝试解密 Query、Form Data 和 JSON 请求体中的密文或 Base64 文本；Response 会递归处理 JSON 对象和数组中的字段，也支持整段密文响应。面板「解密设置」支持 AES（ECB/PKCS7，默认）、DES（ECB/PKCS7）、3DES（ECB/PKCS7）和 Base64 解码；默认方式和默认密钥仍来自 `crypto.js`，自定义配置只保存在扩展本地。`Preview` 显示结构化内容，`Response` 显示格式化后的响应。
 
-工具栏的「原始内容」开关可在原始请求/响应与解码后的请求/响应之间切换。
+工具栏的「原始内容」开关可在原始请求/响应与解密或解码后的请求/响应之间切换。
 
 接口列表使用 Chrome Network 风格的名称和类型图标；可拖动列表与详情之间的分隔线调整宽度。Payload 和 Response 中的 JSON 会格式化并进行语法着色，原始模式仍保留密文和 Base64 字段值。
 

@@ -1,4 +1,10 @@
-import { DEFAULT_AES_KEY, decrypt, normalizeBase64 } from "./crypto.js";
+import {
+  DEFAULT_AES_KEY,
+  DEFAULT_ENCRYPTION_METHOD,
+  decrypt,
+  getEncryptionMethod,
+  normalizeBase64,
+} from "./crypto.js";
 
 const MAX_DECODE_DEPTH = 64;
 const CONTROL_CHARACTERS = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/;
@@ -15,9 +21,10 @@ function base64Bytes(value) {
   }
 }
 
-function isCipherCandidate(value) {
+function isCipherCandidate(value, method) {
   const bytes = base64Bytes(value);
-  return Boolean(bytes && bytes.length >= 16 && bytes.length % 16 === 0);
+  const blockSize = getEncryptionMethod(method).blockSize;
+  return Boolean(blockSize && bytes && bytes.length >= blockSize && bytes.length % blockSize === 0);
 }
 
 function decodeBase64Text(value) {
@@ -46,17 +53,17 @@ function parseStructuredJson(value) {
   }
 }
 
-function decodeNested(value, key, depth = 0) {
+function decodeNested(value, key, method = DEFAULT_ENCRYPTION_METHOD, depth = 0) {
   if (depth >= MAX_DECODE_DEPTH) return { value, changed: false };
 
   if (typeof value === "string") {
-    return decodeString(value, key, depth);
+    return decodeString(value, key, method, depth);
   }
 
   if (Array.isArray(value)) {
     let changed = false;
     const items = value.map((item) => {
-      const result = decodeNested(item, key, depth + 1);
+      const result = decodeNested(item, key, method, depth + 1);
       changed ||= result.changed;
       return result.value;
     });
@@ -66,7 +73,7 @@ function decodeNested(value, key, depth = 0) {
   if (value !== null && typeof value === "object") {
     let changed = false;
     const entries = Object.entries(value).map(([name, item]) => {
-      const result = decodeNested(item, key, depth + 1);
+      const result = decodeNested(item, key, method, depth + 1);
       changed ||= result.changed;
       return [name, result.value];
     });
@@ -78,11 +85,11 @@ function decodeNested(value, key, depth = 0) {
   return { value, changed: false };
 }
 
-function decodeString(value, key, depth) {
-  if (isCipherCandidate(value)) {
-    const decrypted = decrypt(value, key);
+function decodeString(value, key, method, depth) {
+  if (isCipherCandidate(value, method)) {
+    const decrypted = decrypt(value, key, method);
     if (decrypted !== value && !(typeof decrypted === "string" && CONTROL_CHARACTERS.test(decrypted))) {
-      const nested = decodeNested(decrypted, key, depth + 1);
+      const nested = decodeNested(decrypted, key, method, depth + 1);
       return { value: nested.value, changed: true };
     }
   }
@@ -91,7 +98,7 @@ function decodeString(value, key, depth) {
   if (base64Text !== null && base64Text !== value) {
     const parsed = parseStructuredJson(base64Text);
     if (parsed !== null) {
-      const nested = decodeNested(parsed, key, depth + 1);
+      const nested = decodeNested(parsed, key, method, depth + 1);
       return { value: nested.value, changed: true };
     }
     return { value: base64Text, changed: true };
@@ -99,8 +106,8 @@ function decodeString(value, key, depth) {
 
   const nestedJson = parseStructuredJson(value);
   if (nestedJson !== null) {
-    const nested = decodeNested(nestedJson, key, depth + 1);
-    if (nested.changed) return { value: nested.value, changed: true };
+    const nested = decodeNested(nestedJson, key, method, depth + 1);
+    return { value: nested.value, changed: true };
   }
 
   return { value, changed: false };
@@ -134,17 +141,20 @@ function decryptedResponse(value) {
   };
 }
 
-export function decodeDataValue(value, key = DEFAULT_AES_KEY) {
-  return decodeNested(value, key);
+export function decodeDataValue(value, key = DEFAULT_AES_KEY, options = {}) {
+  return decodeNested(value, key, options.method || DEFAULT_ENCRYPTION_METHOD);
 }
 
-export function decodeResponse(rawText, key = DEFAULT_AES_KEY) {
+export function decodeResponse(rawText, key = DEFAULT_AES_KEY, options = {}) {
+  const method = String(options.encryption || "").trim().toUpperCase() === "AES"
+    ? "aes-ecb"
+    : options.method || DEFAULT_ENCRYPTION_METHOD;
   let parsed;
 
   try {
     parsed = JSON.parse(rawText);
   } catch {
-    const result = decodeNested(rawText.trim(), key);
+    const result = decodeString(rawText.trim(), key, method, 0);
     if (result.changed) {
       let value = result.value;
       if (typeof value === "string") {
@@ -166,7 +176,7 @@ export function decodeResponse(rawText, key = DEFAULT_AES_KEY) {
     };
   }
 
-  const result = decodeNested(parsed, key);
+  const result = decodeNested(parsed, key, method);
   if (result.changed) return decryptedResponse(result.value);
 
   return {

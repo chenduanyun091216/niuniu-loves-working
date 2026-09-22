@@ -1,4 +1,4 @@
-import { DEFAULT_AES_KEY } from "./crypto.js";
+import { DEFAULT_AES_KEY, DEFAULT_ENCRYPTION_METHOD, getEncryptionMethod } from "./crypto.js";
 import { decodeDataValue, decodeResponse } from "./response-utils.js";
 import { extractSql } from "./sql-utils.js";
 
@@ -31,11 +31,14 @@ let responseSearchTerm = "";
 let nextId = 1;
 const SQL_KEYWORDS = new Set("ADD ALL ALTER AND ANY AS ASC BETWEEN BY CASE CAST COLLATE COLUMN COMMIT CONSTRAINT CREATE CROSS CURRENT_DATE CURRENT_TIME CURRENT_TIMESTAMP DATABASE DEFAULT DELETE DESC DISTINCT DROP ELSE END EXCEPT EXISTS FALSE FETCH FIRST FOR FOREIGN FROM FULL GRANT GROUP HAVING IN INDEX INNER INSERT INTERSECT INTO IS JOIN KEY LEFT LIKE LIMIT NOT NULL OFFSET ON OR ORDER OUTER PRIMARY REFERENCES RETURNING RIGHT ROLLBACK ROW SELECT SET TABLE THEN TRUE UNION UNIQUE UPDATE USING VALUES WHEN WHERE WITH".split(" "));
 const AES_KEY_STORAGE_KEY = "niuniu-aes-key";
+const ENCRYPTION_METHOD_STORAGE_KEY = "niuniu-encryption-method";
 const THEME_STORAGE_KEY = "niuniu-theme";
 const settingsDialog = document.getElementById("settings-dialog");
 const settingsForm = document.getElementById("settings-form");
+const settingsMethod = document.getElementById("encryption-method");
 const settingsKey = document.getElementById("aes-key");
 const themeSelect = document.getElementById("theme-select");
+const settingsHint = document.querySelector(".settings-hint");
 const settingsError = document.getElementById("settings-error");
 const cancelSettingsButton = document.getElementById("cancel-settings");
 const resetDefaultKeyButton = document.getElementById("reset-default-key");
@@ -49,6 +52,25 @@ function configuredAesKey() {
   } catch {
     return DEFAULT_AES_KEY;
   }
+}
+
+function configuredEncryptionMethod() {
+  try {
+    const savedMethod = localStorage.getItem(ENCRYPTION_METHOD_STORAGE_KEY);
+    return getEncryptionMethod(savedMethod || DEFAULT_ENCRYPTION_METHOD).value;
+  } catch {
+    return DEFAULT_ENCRYPTION_METHOD;
+  }
+}
+
+function updateEncryptionSettings() {
+  const config = getEncryptionMethod(settingsMethod.value);
+  const requiresKey = config.keyLengths.length > 0;
+  settingsKey.disabled = !requiresKey;
+  settingsKey.required = requiresKey;
+  settingsHint.textContent = requiresKey
+    ? `${config.label}：密钥和主题只保存在此扩展的本地配置中。密钥 UTF-8 长度需为 ${config.keyLengths.join("、")} 字节。`
+    : "Base64 不需要密钥。主题和解密方式只保存在此扩展的本地配置中。";
 }
 
 function configuredTheme() {
@@ -69,8 +91,15 @@ applyTheme(configuredTheme());
 
 function responseMimeType(entry) {
   const contentType = entry.response?.content?.mimeType || "";
-  const header = entry.response?.headers?.find((item) => (item.name || "").toLowerCase() === "content-type");
-  return (header?.value || contentType).toLowerCase();
+  return (responseHeader(entry, "content-type") || contentType).toLowerCase();
+}
+
+function responseHeader(entry, name) {
+  return entry.response?.headers?.find((item) => (item.name || "").toLowerCase() === name)?.value || "";
+}
+
+function responseEncryption(entry) {
+  return responseHeader(entry, "x-data-encrypted").trim().toUpperCase();
 }
 
 function isApiRequest(entry) {
@@ -306,6 +335,20 @@ function formatRawJson(text) {
   }
 }
 
+function renderDecodedRequestBody(text, key, method) {
+  const decoded = decodeResponse(text, key, { method });
+  const decodedText = decoded.isJson ? JSON.stringify(decoded.value, null, 2) : decoded.text;
+  if (decodedText === text) return null;
+
+  const section = document.createElement("section");
+  section.className = "detail-section";
+  const heading = document.createElement("h2");
+  heading.className = "section-title";
+  heading.textContent = "Decoded Request Body";
+  section.append(heading, createCodeView(decodedText, decoded.isJson));
+  return section;
+}
+
 function addSection(container, title) {
   const section = document.createElement("section");
   section.className = "detail-section";
@@ -365,6 +408,7 @@ function renderPayload(record) {
   const queryEntries = [...url.searchParams.entries()];
   const postData = record.entry.request.postData;
   const key = configuredAesKey();
+  const method = configuredEncryptionMethod();
 
   if (rawMode && url.search) {
     const section = addSection(detailContent, "Raw Query String");
@@ -373,7 +417,7 @@ function renderPayload(record) {
     const section = addSection(detailContent, "Query String Parameters");
     addRows(section, queryEntries.map(([name, value]) => [
       name,
-      decodeDataValue(value, key).value,
+      decodeDataValue(value, key, { method }).value,
     ]));
   }
 
@@ -381,15 +425,17 @@ function renderPayload(record) {
     const section = addSection(detailContent, "Raw Request Body");
     const rawBody = formatRawJson(postData.text);
     section.append(createCodeView(rawBody.text, rawBody.isJson));
+    const decodedSection = renderDecodedRequestBody(postData.text, key, method);
+    if (decodedSection) detailContent.append(decodedSection);
   } else if (postData?.params?.length) {
     const section = addSection(detailContent, "Form Data");
     addRows(section, postData.params.map((item) => [
       item.name,
-      rawMode ? item.value || "(binary)" : decodeDataValue(item.value || "(binary)", key).value,
+      rawMode ? item.value || "(binary)" : decodeDataValue(item.value || "(binary)", key, { method }).value,
     ]));
   } else if (typeof postData?.text === "string") {
     const section = addSection(detailContent, "Request Payload");
-    const decoded = decodeResponse(postData.text, key);
+    const decoded = decodeResponse(postData.text, key, { method });
     const text = decoded.isJson ? JSON.stringify(decoded.value, null, 2) : decoded.text;
     section.append(createCodeView(text, decoded.isJson));
   }
@@ -423,7 +469,10 @@ function responseFor(record) {
       return { value: text, text, isJson: false, decrypted: false, label: "原始响应" };
     }
   }
-  record.decoded ??= decodeResponse(record.bodyText || "", configuredAesKey());
+  record.decoded ??= decodeResponse(record.bodyText || "", configuredAesKey(), {
+    method: configuredEncryptionMethod(),
+    encryption: responseEncryption(record.entry),
+  });
   return record.decoded;
 }
 
@@ -433,16 +482,37 @@ function renderResponseState(record) {
   responseState.classList.toggle("decrypted", Boolean(decoded?.decrypted));
 }
 
+function previewPrimitive(value) {
+  if (value === null) return "null";
+  if (typeof value === "string") return JSON.stringify(value);
+  return String(value);
+}
+
+function previewValue(value) {
+  if (Array.isArray(value)) return value.length ? "[…]" : "[]";
+  if (value !== null && typeof value === "object") {
+    const entries = Object.entries(value);
+    const preview = entries.slice(0, 5).map(([name, item]) => [
+      `${name}: `,
+      item !== null && typeof item === "object"
+        ? previewValue(item)
+        : previewPrimitive(item),
+    ].join(""));
+    if (entries.length > 5) preview.push("…");
+    return `{${preview.join(", ")}}`;
+  }
+  return previewPrimitive(value);
+}
+
 function renderPreviewValue(value, key, depth = 0) {
   if (value !== null && typeof value === "object") {
     const entries = Array.isArray(value)
       ? value.map((item, index) => [String(index), item])
       : Object.entries(value);
     const details = document.createElement("details");
-    details.open = depth < 1;
+    details.open = depth === 0 || (depth === 1 && Array.isArray(value));
     const summary = document.createElement("summary");
-    const label = key === null ? "Response" : key;
-    summary.textContent = `${label}: ${Array.isArray(value) ? "Array" : "Object"} (${entries.length})`;
+    summary.textContent = key === null ? previewValue(value) : `${key}: ${previewValue(value)}`;
     details.append(summary);
 
     if (depth >= 16) {
@@ -492,13 +562,18 @@ function renderBodyTab(record, tab) {
   const decoded = responseFor(record);
   if (tab === "preview") {
     if (!decoded.isJson) {
-      detailContent.append(createCodeView(decoded.text));
+      const codeView = createCodeView(decoded.text);
+      detailContent.append(codeView);
+      const matchCount = highlightResponseMatches(codeView, responseSearchTerm);
+      responseSearchCount.textContent = responseSearchTerm.trim() ? `${matchCount} 个匹配` : "";
       return;
     }
     const tree = document.createElement("div");
     tree.className = "tree";
     tree.append(renderPreviewValue(decoded.value, null));
     detailContent.append(tree);
+    const matchCount = highlightResponseMatches(tree, responseSearchTerm);
+    responseSearchCount.textContent = responseSearchTerm.trim() ? `${matchCount} 个匹配` : "";
     return;
   }
 
@@ -563,7 +638,7 @@ function requestExplainSql(record) {
   const key = `__niuniuExplain_${crypto.randomUUID().replaceAll("-", "")}`;
   const configLiteral = JSON.stringify(JSON.stringify(config));
   const tokenLiteral = JSON.stringify(key);
-  const expression = `(() => { const key = ${tokenLiteral}; const config = JSON.parse(${configLiteral}); window[key] = { done: false }; fetch(config.url, { method: config.method, headers: config.headers, body: config.body, credentials: "include" }).then(async response => { window[key] = { done: true, ok: response.ok, status: response.status, text: await response.text() }; }).catch(error => { window[key] = { done: true, error: String(error) }; }); return true; })()`;
+  const expression = `(() => { const key = ${tokenLiteral}; const config = JSON.parse(${configLiteral}); window[key] = { done: false }; fetch(config.url, { method: config.method, headers: config.headers, body: config.body, credentials: "include" }).then(async response => { window[key] = { done: true, ok: response.ok, status: response.status, encryption: response.headers.get("X-Data-Encrypted") || "", text: await response.text() }; }).catch(error => { window[key] = { done: true, error: String(error) }; }); return true; })()`;
 
   return new Promise((resolve, reject) => {
     const timeout = window.setTimeout(() => reject(new Error("解释请求超时，请检查接口响应或页面跨域策略。")), 60000);
@@ -584,7 +659,7 @@ function requestExplainSql(record) {
             window.clearTimeout(timeout);
             if (result.error) reject(new Error(`解释请求失败：${result.error}`));
             else if (!result.ok) reject(new Error(`解释接口返回 HTTP ${result.status}：${result.text.slice(0, 300)}`));
-            else resolve(result.text);
+            else resolve({ text: result.text, encryption: result.encryption });
           } else window.setTimeout(poll, 150);
         },
       );
@@ -608,8 +683,11 @@ function renderSqlTab(record) {
     record.sqlError = "";
     renderDetails();
     try {
-      const rawSql = await requestExplainSql(record);
-      const decodedSql = decodeResponse(rawSql, configuredAesKey());
+      const explainResponse = await requestExplainSql(record);
+      const decodedSql = decodeResponse(explainResponse.text, configuredAesKey(), {
+        method: configuredEncryptionMethod(),
+        encryption: explainResponse.encryption || responseEncryption(record.entry),
+      });
       record.sqlText = extractSql(decodedSql);
     } catch (error) {
       record.sqlError = error.message || "获取 SQL 失败。";
@@ -653,9 +731,13 @@ function renderDetails() {
 
   detailsEmpty.hidden = true;
   detailsView.hidden = false;
-  responseSearch.hidden = activeTab !== "response";
-  responseSearchInput.value = activeTab === "response" ? responseSearchTerm : "";
-  responseSearchCount.textContent = activeTab === "response" && responseSearchTerm.trim() ? "0 个匹配" : "";
+  const searchableBodyTab = activeTab === "response" || activeTab === "preview";
+  const searchLabel = activeTab === "preview" ? "Preview" : "Response";
+  responseSearch.hidden = !searchableBodyTab;
+  responseSearchInput.value = searchableBodyTab ? responseSearchTerm : "";
+  responseSearchInput.placeholder = `搜索 ${searchLabel}`;
+  responseSearchInput.setAttribute("aria-label", `搜索 ${searchLabel}`);
+  responseSearchCount.textContent = searchableBodyTab && responseSearchTerm.trim() ? "0 个匹配" : "";
   detailContent.dataset.tab = activeTab;
   const response = record.entry.response || {};
   const status = Number(response.status || 0);
@@ -747,38 +829,52 @@ rawModeToggle.addEventListener("change", () => {
 });
 
 openSettingsButton.addEventListener("click", () => {
+  settingsMethod.value = configuredEncryptionMethod();
   settingsKey.value = configuredAesKey();
   themeSelect.value = configuredTheme();
+  updateEncryptionSettings();
   settingsError.hidden = true;
   settingsDialog.showModal();
+});
+
+settingsMethod.addEventListener("change", () => {
+  settingsError.hidden = true;
+  updateEncryptionSettings();
 });
 
 cancelSettingsButton.addEventListener("click", () => settingsDialog.close());
 resetDefaultKeyButton.addEventListener("click", () => {
   try {
     localStorage.removeItem(AES_KEY_STORAGE_KEY);
+    localStorage.removeItem(ENCRYPTION_METHOD_STORAGE_KEY);
   } catch {
     settingsError.textContent = "无法恢复默认密钥，请检查浏览器的扩展存储设置。";
     settingsError.hidden = false;
     return;
   }
 
+  settingsMethod.value = DEFAULT_ENCRYPTION_METHOD;
+  settingsKey.value = DEFAULT_AES_KEY;
+  updateEncryptionSettings();
   invalidateDecodedRecords();
   settingsDialog.close();
   renderDetails();
 });
 settingsForm.addEventListener("submit", (event) => {
   event.preventDefault();
+  const method = getEncryptionMethod(settingsMethod.value).value;
   const key = settingsKey.value;
   const keyLength = new TextEncoder().encode(key).length;
-  if (![16, 24, 32].includes(keyLength)) {
-    settingsError.textContent = "密钥的 UTF-8 长度必须为 16、24 或 32 字节。";
+  const config = getEncryptionMethod(method);
+  if (config.keyLengths.length > 0 && !config.keyLengths.includes(keyLength)) {
+    settingsError.textContent = `${config.label} 的密钥 UTF-8 长度必须为 ${config.keyLengths.join("、")} 字节。`;
     settingsError.hidden = false;
     return;
   }
 
   try {
     localStorage.setItem(AES_KEY_STORAGE_KEY, key);
+    localStorage.setItem(ENCRYPTION_METHOD_STORAGE_KEY, method);
     localStorage.setItem(THEME_STORAGE_KEY, themeSelect.value);
   } catch {
     settingsError.textContent = "无法保存密钥，请检查浏览器的扩展存储设置。";
