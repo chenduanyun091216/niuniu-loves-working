@@ -1,25 +1,10 @@
-import { DEFAULT_AES_KEY, decrypt } from "./crypto.js";
+import { DEFAULT_AES_KEY, decrypt, normalizeBase64 } from "./crypto.js";
 
 const MAX_DECODE_DEPTH = 64;
 const CONTROL_CHARACTERS = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/;
 
-function normalizedBase64(value) {
-  const compact = value.trim()
-    .replace(/[\t\r\n]/g, "")
-    .replace(/ /g, "+")
-    .replace(/-/g, "+")
-    .replace(/_/g, "/");
-  if (!compact || !/^[A-Za-z0-9+/]*={0,2}$/.test(compact)) return "";
-
-  const unpadded = compact.replace(/=+$/, "");
-  const paddingLength = (4 - unpadded.length % 4) % 4;
-  const suppliedPadding = compact.length - unpadded.length;
-  if (unpadded.length % 4 === 1 || (suppliedPadding && suppliedPadding !== paddingLength)) return "";
-  return unpadded + "=".repeat(paddingLength);
-}
-
 function base64Bytes(value) {
-  const encoded = normalizedBase64(value);
+  const encoded = normalizeBase64(value);
   if (!encoded) return null;
 
   try {

@@ -2,7 +2,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import Body, FastAPI, Header, Query, Request
-from fastapi.responses import PlainTextResponse, RedirectResponse
+from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 
@@ -15,7 +15,7 @@ ENCRYPTED_JSON = (
 app = FastAPI(title="牛牛爱上班 API 测试站")
 
 
-async def mock_sql_explain(request: Request) -> PlainTextResponse:
+async def mock_sql_explain(request: Request) -> JSONResponse:
     body = await request.body()
     source = request.query_params.get("source", "").replace("\r", " ").replace("\n", " ")[:120]
     demo_header = request.headers.get("x-demo-header", "(missing)").replace("\r", " ").replace("\n", " ")[:120]
@@ -33,7 +33,7 @@ async def mock_sql_explain(request: Request) -> PlainTextResponse:
         "ORDER BY id",
         "LIMIT 20;",
     ))
-    return PlainTextResponse(sql, headers={"X-Test-Mode": "sql-explain"})
+    return JSONResponse({"data": [{"sql": sql}]}, headers={"X-Test-Mode": "sql-explain"})
 
 
 @app.get("/", include_in_schema=False)

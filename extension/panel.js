@@ -1,5 +1,6 @@
 import { DEFAULT_AES_KEY } from "./crypto.js";
 import { decodeDataValue, decodeResponse } from "./response-utils.js";
+import { extractSql } from "./sql-utils.js";
 
 const requestList = document.getElementById("request-list");
 const requestCount = document.getElementById("request-count");
@@ -14,6 +15,15 @@ const responseSearch = document.getElementById("response-search");
 const responseSearchInput = document.getElementById("response-search-input");
 const responseSearchCount = document.getElementById("response-search-count");
 const responseSearchClear = document.getElementById("response-search-clear");
+const clearRequestsButton = document.getElementById("clear-requests");
+const openSettingsButton = document.getElementById("open-settings");
+const detailTabs = document.querySelector(".detail-tabs");
+const detailTabButtons = [...detailTabs.querySelectorAll("button")];
+const detailMethod = document.getElementById("detail-method");
+const detailUrl = document.getElementById("detail-url");
+const detailStatus = document.getElementById("detail-status");
+const detailDuration = document.getElementById("detail-duration");
+const responseState = document.getElementById("response-state");
 const records = [];
 let selectedId = null;
 let activeTab = "headers";
@@ -27,6 +37,8 @@ const settingsForm = document.getElementById("settings-form");
 const settingsKey = document.getElementById("aes-key");
 const themeSelect = document.getElementById("theme-select");
 const settingsError = document.getElementById("settings-error");
+const cancelSettingsButton = document.getElementById("cancel-settings");
+const resetDefaultKeyButton = document.getElementById("reset-default-key");
 const rawModeToggle = document.getElementById("raw-mode-toggle");
 let rawMode = false;
 const JSON_TOKEN_PATTERN = /("(?:\\.|[^"\\])*"(?=\s*:))|("(?:\\.|[^"\\])*")|(-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?)|\b(true|false)\b|\b(null)\b|([{}\[\],:])|(\s+)|([\s\S])/gy;
@@ -87,6 +99,17 @@ function createRecord(entry) {
   return record;
 }
 
+function clearRecords() {
+  records.length = 0;
+  selectedId = null;
+  renderList();
+  renderDetails();
+}
+
+function invalidateDecodedRecords() {
+  for (const record of records) record.decoded = null;
+}
+
 function decodeContent(content, encoding) {
   if (typeof content !== "string") return "";
   if (encoding !== "base64") return content;
@@ -116,24 +139,24 @@ function setResponseContent(record, content, encoding) {
   if (record.id === selectedId) renderDetails();
 }
 
+function setBodyError(record, message) {
+  record.bodyText = "";
+  record.bodyReady = true;
+  record.bodyError = message;
+  if (record.id === selectedId) renderDetails();
+}
+
 function loadLiveContent(record, request) {
   if (typeof request.getContent !== "function") {
-    record.bodyError = "无法读取响应正文。";
-    record.bodyReady = true;
+    setBodyError(record, "无法读取响应正文。");
     return;
   }
 
   try {
     request.getContent((content, encoding) => setResponseContent(record, content, encoding));
   } catch {
-    record.bodyError = "无法读取响应正文。";
-    record.bodyReady = true;
+    setBodyError(record, "无法读取响应正文。");
   }
-}
-
-function statusText(record) {
-  const status = Number(record.entry.response?.status || 0);
-  return status ? String(status) : "—";
 }
 
 function requestName(url) {
@@ -405,10 +428,9 @@ function responseFor(record) {
 }
 
 function renderResponseState(record) {
-  const state = document.getElementById("response-state");
   const decoded = responseFor(record);
-  state.textContent = record.bodyError || (decoded ? decoded.label : "正在读取响应");
-  state.classList.toggle("decrypted", Boolean(decoded?.decrypted));
+  responseState.textContent = record.bodyError || (decoded ? decoded.label : "正在读取响应");
+  responseState.classList.toggle("decrypted", Boolean(decoded?.decrypted));
 }
 
 function renderPreviewValue(value, key, depth = 0) {
@@ -588,9 +610,7 @@ function renderSqlTab(record) {
     try {
       const rawSql = await requestExplainSql(record);
       const decodedSql = decodeResponse(rawSql, configuredAesKey());
-      const sqlText = (typeof decodedSql.value === "string" ? decodedSql.value : decodedSql.text).trim();
-      if (!sqlText) throw new Error("解释接口返回了空 SQL。");
-      record.sqlText = sqlText;
+      record.sqlText = extractSql(decodedSql);
     } catch (error) {
       record.sqlError = error.message || "获取 SQL 失败。";
     } finally {
@@ -637,13 +657,14 @@ function renderDetails() {
   responseSearchInput.value = activeTab === "response" ? responseSearchTerm : "";
   responseSearchCount.textContent = activeTab === "response" && responseSearchTerm.trim() ? "0 个匹配" : "";
   detailContent.dataset.tab = activeTab;
-  document.getElementById("detail-method").textContent = record.entry.request.method || "GET";
-  document.getElementById("detail-url").textContent = record.entry.request.url;
-  document.getElementById("detail-url").title = record.entry.request.url;
-  const status = document.getElementById("detail-status");
-  status.textContent = `${statusText(record)} ${record.entry.response.statusText || ""}`.trim();
-  status.className = Number(statusText(record)) >= 400 ? "status-error" : "status-ok";
-  document.getElementById("detail-duration").textContent = `${Number(record.entry.time || 0).toFixed(0)} ms`;
+  const response = record.entry.response || {};
+  const status = Number(response.status || 0);
+  detailMethod.textContent = record.entry.request.method || "GET";
+  detailUrl.textContent = record.entry.request.url;
+  detailUrl.title = record.entry.request.url;
+  detailStatus.textContent = `${status || "—"} ${response.statusText || ""}`.trim();
+  detailStatus.className = status >= 400 ? "status-error" : "status-ok";
+  detailDuration.textContent = `${Number(record.entry.time || 0).toFixed(0)} ms`;
 
   renderResponseState(record);
   detailContent.replaceChildren();
@@ -652,7 +673,7 @@ function renderDetails() {
   else if (activeTab === "sql") renderSqlTab(record);
   else renderBodyTab(record, activeTab);
 
-  document.querySelectorAll(".detail-tabs button").forEach((button) => {
+  detailTabButtons.forEach((button) => {
     const active = button.dataset.tab === activeTab;
     button.classList.toggle("active", active);
     button.setAttribute("aria-selected", String(active));
@@ -668,14 +689,9 @@ requestList.addEventListener("click", (event) => {
 });
 
 searchInput.addEventListener("input", renderList);
-document.getElementById("clear-requests").addEventListener("click", () => {
-  records.length = 0;
-  selectedId = null;
-  renderList();
-  renderDetails();
-});
+clearRequestsButton.addEventListener("click", clearRecords);
 
-document.querySelector(".detail-tabs").addEventListener("click", (event) => {
+detailTabs.addEventListener("click", (event) => {
   const button = event.target.closest("[data-tab]");
   if (!button) return;
   activeTab = button.dataset.tab;
@@ -730,15 +746,15 @@ rawModeToggle.addEventListener("change", () => {
   renderDetails();
 });
 
-document.getElementById("open-settings").addEventListener("click", () => {
+openSettingsButton.addEventListener("click", () => {
   settingsKey.value = configuredAesKey();
   themeSelect.value = configuredTheme();
   settingsError.hidden = true;
   settingsDialog.showModal();
 });
 
-document.getElementById("cancel-settings").addEventListener("click", () => settingsDialog.close());
-document.getElementById("reset-default-key").addEventListener("click", () => {
+cancelSettingsButton.addEventListener("click", () => settingsDialog.close());
+resetDefaultKeyButton.addEventListener("click", () => {
   try {
     localStorage.removeItem(AES_KEY_STORAGE_KEY);
   } catch {
@@ -747,7 +763,7 @@ document.getElementById("reset-default-key").addEventListener("click", () => {
     return;
   }
 
-  for (const record of records) record.decoded = null;
+  invalidateDecodedRecords();
   settingsDialog.close();
   renderDetails();
 });
@@ -771,7 +787,7 @@ settingsForm.addEventListener("submit", (event) => {
   }
 
   applyTheme(themeSelect.value);
-  for (const record of records) record.decoded = null;
+  invalidateDecodedRecords();
   settingsDialog.close();
   renderDetails();
 });
@@ -785,11 +801,6 @@ function addRequest(entry) {
 }
 
 chrome.devtools.network.onRequestFinished.addListener(addRequest);
-chrome.devtools.network.onNavigated.addListener(() => {
-  records.length = 0;
-  selectedId = null;
-  renderList();
-  renderDetails();
-});
+chrome.devtools.network.onNavigated.addListener(clearRecords);
 
 renderList();
