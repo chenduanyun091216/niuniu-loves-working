@@ -81,7 +81,7 @@ async def encrypted_response(
     request: Request,
     source: str = Query(default="button"),
     is_explain: bool = Query(default=False, alias="isExplain"),
-) -> PlainTextResponse:
+) -> Response:
     if is_explain:
         return await mock_sql_explain(request)
     return PlainTextResponse(

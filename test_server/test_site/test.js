@@ -58,7 +58,7 @@ function addResult(method, url, status, text) {
 async function runRequest(name) {
   const request = requests[name];
   const button = document.querySelector(`[data-run="${name}"]`);
-  const method = name === "echo" ? "POST" : "GET";
+  const method = ["base64", "echo"].includes(name) ? "POST" : "GET";
   const url = {
     plain: "/api/plain?source=button",
     table: "/api/table?source=button",

@@ -1,11 +1,23 @@
 import { DEFAULT_AES_KEY, DEFAULT_ENCRYPTION_METHOD, getEncryptionMethod } from "./crypto.js";
 import { decodeDataValue, decodeResponse } from "./response-utils.js";
 import {
+  hasJsonResponse,
+  isExplainRequest,
+  isFileResponse,
+  isTextMimeType,
+  requestIdentity,
+  requestName,
+  requestResourceType,
+  responseHeader,
+  responseMimeType,
+} from "./network-utils.js";
+import {
   DEFAULT_SQL_BLOCKED_MARKERS,
   extractSql,
   findSqlBlockedMarker,
   parseSqlBlockedMarkers,
 } from "./sql-utils.js";
+import { findTabularData, formatTableCell } from "./table-utils.js";
 
 const requestList = document.getElementById("request-list");
 const requestCount = document.getElementById("request-count");
@@ -25,6 +37,7 @@ const clearRequestsButton = document.getElementById("clear-requests");
 const requestFilterButtons = [...document.querySelectorAll("[data-request-filter]")];
 const globalSearchButton = document.getElementById("global-search");
 const reloadPageButton = document.getElementById("reload-page");
+const themeToggleButton = document.getElementById("toggle-theme");
 const openSettingsButton = document.getElementById("open-settings");
 const detailTabs = document.querySelector(".detail-tabs");
 const detailTabButtons = [...detailTabs.querySelectorAll("button")];
@@ -46,11 +59,14 @@ const AES_KEY_STORAGE_KEY = "niuniu-aes-key";
 const ENCRYPTION_METHOD_STORAGE_KEY = "niuniu-encryption-method";
 const THEME_STORAGE_KEY = "niuniu-theme";
 const SQL_BLOCKED_MARKERS_STORAGE_KEY = "niuniu-sql-blocked-markers";
+const PROFESSIONAL_LIST_MODE_STORAGE_KEY = "niuniu-professional-request-list";
+const PROFESSIONAL_SIDEBAR_WIDTH_STORAGE_KEY = "niuniu-professional-sidebar-width";
+const PROFESSIONAL_LIST_MODE_WIDTH_DELTA = 72;
 const settingsDialog = document.getElementById("settings-dialog");
 const settingsForm = document.getElementById("settings-form");
 const settingsMethod = document.getElementById("encryption-method");
 const settingsKey = document.getElementById("aes-key");
-const themeSelect = document.getElementById("theme-select");
+const requestListModeToggle = document.getElementById("toggle-request-list-mode");
 const settingsSqlBlockedMarkers = document.getElementById("sql-blocked-markers");
 const settingsHint = document.querySelector(".settings-hint");
 const settingsError = document.getElementById("settings-error");
@@ -65,6 +81,8 @@ const globalSearchSubmit = document.getElementById("global-search-submit");
 const globalSearchStatus = document.getElementById("global-search-status");
 const globalSearchResults = document.getElementById("global-search-results");
 const rawModeToggle = document.getElementById("raw-mode-toggle");
+const tableCellDialog = document.getElementById("table-cell-dialog");
+const tableCellValue = document.getElementById("table-cell-value");
 let rawMode = false;
 const JSON_TOKEN_PATTERN = /("(?:\\.|[^"\\])*"(?=\s*:))|("(?:\\.|[^"\\])*")|(-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?)|\b(true|false)\b|\b(null)\b|([{}\[\],:])|(\s+)|([\s\S])/gy;
 
@@ -115,8 +133,8 @@ function updateEncryptionSettings() {
   settingsKey.disabled = !requiresKey;
   settingsKey.required = requiresKey;
   settingsHint.textContent = requiresKey
-    ? `${config.label}：密钥、主题和 SQL 禁止标识只保存在此扩展的本地配置中。密钥 UTF-8 长度需为 ${config.keyLengths.join("、")} 字节。`
-    : "Base64 不需要密钥。主题、解密方式和 SQL 禁止标识只保存在此扩展的本地配置中。";
+    ? `${config.label}：密钥和 SQL 禁止标识只保存在此扩展的本地配置中。密钥 UTF-8 长度需为 ${config.keyLengths.join("、")} 字节。`
+    : "Base64 不需要密钥。解密方式和 SQL 禁止标识只保存在此扩展的本地配置中。";
 }
 
 function configuredTheme() {
@@ -129,50 +147,48 @@ function configuredTheme() {
   return window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 }
 
+function configuredProfessionalListMode() {
+  try {
+    return localStorage.getItem(PROFESSIONAL_LIST_MODE_STORAGE_KEY) === "minimal" ? "minimal" : "detailed";
+  } catch {
+    return "detailed";
+  }
+}
+
+function isProfessionalLayout() {
+  return true;
+}
+
+function updateRequestListModeToggle() {
+  const minimal = document.documentElement.dataset.requestListMode === "minimal";
+  requestListModeToggle.textContent = minimal ? ">" : "<";
+  requestListModeToggle.title = minimal ? "展开 Method、Status、Time" : "收起 Method、Status、Time";
+  requestListModeToggle.setAttribute("aria-label", requestListModeToggle.title);
+}
+
+function updateThemeToggle() {
+  const dark = document.documentElement.dataset.theme === "dark";
+  themeToggleButton.title = dark ? "切换到亮色主题" : "切换到暗色主题";
+  themeToggleButton.setAttribute("aria-label", themeToggleButton.title);
+  themeToggleButton.setAttribute("aria-pressed", String(dark));
+}
+
 function applyTheme(theme) {
   document.documentElement.dataset.theme = theme;
+  document.documentElement.dataset.density = "compact";
+  document.documentElement.dataset.requestListMode = configuredProfessionalListMode();
+  updateRequestListModeToggle();
+  updateThemeToggle();
 }
 
 applyTheme(configuredTheme());
-
-function responseMimeType(entry) {
-  const contentType = entry.response?.content?.mimeType || "";
-  return (responseHeader(entry, "content-type") || contentType).toLowerCase();
-}
-
-function responseHeader(entry, name) {
-  return entry.response?.headers?.find((item) => (item.name || "").toLowerCase() === name)?.value || "";
-}
 
 function responseEncryption(entry) {
   return responseHeader(entry, "x-data-encrypted").trim().toUpperCase();
 }
 
-function requestResourceType(entry) {
-  const type = String(entry._resourceType || entry.type || "").toLowerCase();
-  if (type === "xhr" || type === "fetch") return "fetch-xhr";
-  if (["document", "stylesheet", "script", "font", "image", "media", "manifest", "websocket", "wasm"].includes(type)) {
-    return type;
-  }
-  return "other";
-}
-
 function requestMatchesFilter(entry) {
   return requestFilter === "all" || requestResourceType(entry) === requestFilter;
-}
-
-function requestIdentity(entry) {
-  const requestId = entry._requestId || entry.requestId;
-  if (requestId) return `id:${requestId}`;
-
-  const request = entry.request || {};
-  return [
-    entry.startedDateTime || "",
-    request.method || "GET",
-    request.url || "",
-    entry.time ?? "",
-    entry.response?.status ?? "",
-  ].join("\u0001");
 }
 
 function createRecord(entry, identity = requestIdentity(entry)) {
@@ -210,22 +226,8 @@ function decodeBase64Text(content) {
   return new TextDecoder().decode(bytes);
 }
 
-function isTextMimeType(mimeType) {
-  return /^(text\/|application\/(json|javascript|xml|graphql|x-www-form-urlencoded)|image\/svg\+xml)/i.test(mimeType);
-}
-
 function isBinaryResponse(record) {
   return record.bodyEncoding === "base64" && !isTextMimeType(responseMimeType(record.entry));
-}
-
-function isFileResponse(entry) {
-  const resourceType = requestResourceType(entry);
-  if (["image", "media", "font", "wasm"].includes(resourceType)) return true;
-  if (/\battachment\b/i.test(responseHeader(entry, "content-disposition"))) return true;
-
-  const mimeType = responseMimeType(entry);
-  return /^(image|audio|video|font)\//.test(mimeType)
-    || /^(text\/(csv|tab-separated-values)|application\/(octet-stream|pdf|zip|gzip|x-7z-compressed|x-rar-compressed|msword|vnd\.))/.test(mimeType);
 }
 
 function setResponseContent(record, content, encoding) {
@@ -281,29 +283,6 @@ function loadLiveContent(record, request) {
   }
 }
 
-function requestName(url) {
-  try {
-    const parsed = new URL(url);
-    const segments = parsed.pathname.split("/").filter(Boolean);
-    return `${segments[segments.length - 1] || parsed.host}${parsed.search}`;
-  } catch {
-    return url;
-  }
-}
-
-function isExplainRequest(url) {
-  try {
-    return new URL(url).searchParams.get("isExplain") === "true";
-  } catch {
-    return false;
-  }
-}
-
-function hasJsonResponse(entry) {
-  const mimeType = responseMimeType(entry);
-  return !mimeType || /json|graphql/.test(mimeType);
-}
-
 function renderList() {
   const query = searchInput.value.trim().toLowerCase();
   const filtered = records.filter((record) => {
@@ -348,15 +327,27 @@ function renderList() {
     name.className = "request-name";
     name.textContent = requestName(request.url);
     name.title = request.url;
-    row.append(icon, name);
+    const method = document.createElement("span");
+    method.className = "request-method";
+    method.textContent = request.method || "GET";
+    const status = document.createElement("span");
+    const statusCode = Number(record.entry.response?.status || 0);
+    status.className = `request-status${statusCode >= 400 ? " status-error" : ""}`;
+    status.textContent = statusCode || "—";
+    const duration = document.createElement("span");
+    duration.className = "request-time";
+    duration.textContent = `${Number(record.entry.time || 0).toFixed(0)} ms`;
+    const tableBadge = document.createElement("span");
+    tableBadge.className = "request-table-badge";
     if (tabularDataFor(record)) {
-      const tableBadge = document.createElement("span");
-      tableBadge.className = "request-table-badge";
       tableBadge.textContent = "表";
       tableBadge.title = "可生成表格";
       tableBadge.setAttribute("aria-label", "可生成表格");
-      row.append(tableBadge);
+    } else {
+      tableBadge.classList.add("empty");
+      tableBadge.setAttribute("aria-hidden", "true");
     }
+    row.append(icon, name, method, status, duration, tableBadge);
     requestList.append(row);
   }
 }
@@ -372,6 +363,36 @@ function applySidebarWidth(width) {
   resizeDivider.setAttribute("aria-valuemin", String(Math.round(minWidth)));
   resizeDivider.setAttribute("aria-valuemax", String(Math.round(maxWidth)));
   resizeDivider.setAttribute("aria-valuenow", String(Math.round(nextWidth)));
+}
+
+function configuredProfessionalSidebarWidth() {
+  try {
+    const width = Number(localStorage.getItem(PROFESSIONAL_SIDEBAR_WIDTH_STORAGE_KEY));
+    return Number.isFinite(width) && width > 0 ? width : 0;
+  } catch {
+    return 0;
+  }
+}
+
+function saveProfessionalSidebarWidth() {
+  if (!isProfessionalLayout()) return;
+  try {
+    localStorage.setItem(PROFESSIONAL_SIDEBAR_WIDTH_STORAGE_KEY, String(Math.round(requestSidebar.getBoundingClientRect().width)));
+  } catch {
+    // The resized layout remains available for the current panel session.
+  }
+}
+
+function resizeSidebarForRequestListMode(previousMode, nextMode) {
+  if (!isProfessionalLayout() || previousMode === nextMode) return;
+  const direction = nextMode === "minimal" ? -1 : 1;
+  applySidebarWidth(requestSidebar.getBoundingClientRect().width + direction * PROFESSIONAL_LIST_MODE_WIDTH_DELTA);
+  saveProfessionalSidebarWidth();
+}
+
+function applyThemeLayout() {
+  renderList();
+  renderDetails();
 }
 
 function createCodeView(text, isJson = false) {
@@ -554,7 +575,20 @@ function renderPayload(record) {
 function createNote(text) {
   const note = document.createElement("div");
   note.className = "empty-note";
-  note.textContent = text;
+  if (!isProfessionalLayout() || !text) {
+    note.textContent = text;
+    return note;
+  }
+  const isLoading = /^正在/.test(text);
+  const isError = /无法|错误|失败|超时|不支持|禁止/.test(text);
+  note.classList.add(isLoading ? "loading" : isError ? "error" : "empty");
+  const icon = document.createElement("span");
+  icon.className = "empty-note-icon";
+  icon.setAttribute("aria-hidden", "true");
+  icon.textContent = isLoading ? "◌" : isError ? "!" : "—";
+  const message = document.createElement("span");
+  message.textContent = text;
+  note.append(icon, message);
   return note;
 }
 
@@ -732,57 +766,67 @@ function renderPreviewValue(value, key, depth = 0) {
   return row;
 }
 
-function isTableRow(value) {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
-}
-
-function tableCandidateScore(rows, depth) {
-  const columns = new Set(rows.flatMap((row) => Object.keys(row)));
-  if (!columns.size) return -Infinity;
-
-  const populatedRows = rows.filter((row) => Object.keys(row).length > 0).length;
-  const averageColumns = rows.reduce((total, row) => total + Object.keys(row).length, 0) / rows.length;
-  return rows.length * 10 + columns.size * 2 + populatedRows + averageColumns - depth;
-}
-
-function findTabularData(value, path = "$", depth = 0, best = null) {
-  if (depth > 16 || value === null || typeof value !== "object") return best;
-
-  if (Array.isArray(value)) {
-    if (value.length > 0 && value.every(isTableRow)) {
-      const score = tableCandidateScore(value, depth);
-      if (Number.isFinite(score) && (!best || score > best.score)) best = { path, rows: value, score };
-    }
-    for (const [index, child] of value.entries()) {
-      const childPath = `${path}[${index}]`;
-      best = findTabularData(child, childPath, depth + 1, best);
-    }
-    return best;
-  }
-
-  for (const [key, child] of Object.entries(value)) {
-    const childPath = /^[A-Za-z_$][\w$]*$/.test(key) ? `${path}.${key}` : `${path}[${JSON.stringify(key)}]`;
-    best = findTabularData(child, childPath, depth + 1, best);
-  }
-  return best;
-}
-
 function tabularDataFor(record) {
   const decoded = responseFor(record);
   return decoded?.isJson ? findTabularData(decoded.value) : null;
 }
 
-function formatTableCell(value) {
-  if (value === undefined) return "—";
-  if (value === null) return "null";
-  if (typeof value === "object") {
-    try {
-      return JSON.stringify(value);
-    } catch {
-      return String(value);
-    }
+function addTableColumnResizer(header) {
+  const resizer = document.createElement("span");
+  resizer.className = "table-column-resizer";
+  resizer.tabIndex = 0;
+  resizer.setAttribute("role", "separator");
+  resizer.setAttribute("aria-orientation", "vertical");
+  resizer.setAttribute("aria-label", `调整 ${header.textContent} 列宽`);
+
+  const setWidth = (width) => {
+    const nextWidth = Math.max(72, Math.round(width));
+    header.style.width = `${nextWidth}px`;
+    header.style.minWidth = `${nextWidth}px`;
+    resizer.setAttribute("aria-valuenow", String(nextWidth));
+  };
+  resizer.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0) return;
+    resizer.setPointerCapture(event.pointerId);
+    document.body.classList.add("is-table-resizing");
+    resizer.dataset.startX = String(event.clientX);
+    resizer.dataset.startWidth = String(header.getBoundingClientRect().width);
+    event.preventDefault();
+  });
+  resizer.addEventListener("pointermove", (event) => {
+    if (!resizer.hasPointerCapture(event.pointerId)) return;
+    setWidth(Number(resizer.dataset.startWidth) + event.clientX - Number(resizer.dataset.startX));
+  });
+  const finishResize = () => document.body.classList.remove("is-table-resizing");
+  resizer.addEventListener("pointerup", finishResize);
+  resizer.addEventListener("pointercancel", finishResize);
+  resizer.addEventListener("lostpointercapture", finishResize);
+  resizer.addEventListener("keydown", (event) => {
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+    event.preventDefault();
+    setWidth(header.getBoundingClientRect().width + (event.key === "ArrowLeft" ? -12 : 12));
+  });
+  header.append(resizer);
+}
+
+function createTableCell(value) {
+  const cell = document.createElement("td");
+  const text = formatTableCell(value);
+  if (!isProfessionalLayout() || text.length <= 80) {
+    cell.textContent = text;
+    return cell;
   }
-  return String(value);
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "table-cell-preview";
+  button.textContent = text;
+  button.title = "查看完整内容";
+  button.addEventListener("click", () => {
+    tableCellValue.textContent = text;
+    tableCellDialog.showModal();
+  });
+  cell.append(button);
+  return cell;
 }
 
 function renderTableTab(record) {
@@ -821,11 +865,13 @@ function renderTableTab(record) {
   indexHeader.className = "table-index";
   indexHeader.scope = "col";
   indexHeader.textContent = "序号";
+  if (isProfessionalLayout()) addTableColumnResizer(indexHeader);
   headerRow.append(indexHeader);
   for (const column of columns) {
     const cell = document.createElement("th");
     cell.scope = "col";
     cell.textContent = column;
+    if (isProfessionalLayout()) addTableColumnResizer(cell);
     headerRow.append(cell);
   }
   thead.append(headerRow);
@@ -838,9 +884,7 @@ function renderTableTab(record) {
     indexCell.textContent = String(index + 1);
     tableRow.append(indexCell);
     for (const column of columns) {
-      const cell = document.createElement("td");
-      cell.textContent = formatTableCell(row[column]);
-      tableRow.append(cell);
+      tableRow.append(createTableCell(row[column]));
     }
     tbody.append(tableRow);
   }
@@ -1004,29 +1048,50 @@ function requestExplainSql(record) {
   const key = `__niuniuExplain_${crypto.randomUUID().replaceAll("-", "")}`;
   const configLiteral = JSON.stringify(JSON.stringify(config));
   const tokenLiteral = JSON.stringify(key);
-  const expression = `(() => { const key = ${tokenLiteral}; const config = JSON.parse(${configLiteral}); window[key] = { done: false }; fetch(config.url, { method: config.method, headers: config.headers, body: config.body, credentials: "include" }).then(async response => { window[key] = { done: true, ok: response.ok, status: response.status, encryption: response.headers.get("X-Data-Encrypted") || "", text: await response.text() }; }).catch(error => { window[key] = { done: true, error: String(error) }; }); return true; })()`;
+  const expression = `(() => { const key = ${tokenLiteral}; const config = JSON.parse(${configLiteral}); const controller = new AbortController(); const timeout = window.setTimeout(() => controller.abort(), 60000); window[key] = { done: false, controller, timeout }; fetch(config.url, { method: config.method, headers: config.headers, body: config.body, credentials: "include", signal: controller.signal }).then(async response => { const current = window[key]; if (!current) return; window.clearTimeout(current.timeout); window[key] = { done: true, ok: response.ok, status: response.status, encryption: response.headers.get("X-Data-Encrypted") || "", text: await response.text() }; }).catch(error => { const current = window[key]; if (!current) return; window.clearTimeout(current.timeout); window[key] = { done: true, error: error?.name === "AbortError" ? "解释请求超时，请检查接口响应或页面跨域策略。" : String(error) }; }); return true; })()`;
+  const pollExpression = `(() => { const result = window[${tokenLiteral}]; if (!result) return null; if (!result.done) return { done: false }; delete window[${tokenLiteral}]; return result; })()`;
+  const cleanupExpression = `(() => { const result = window[${tokenLiteral}]; if (result?.timeout) window.clearTimeout(result.timeout); result?.controller?.abort(); delete window[${tokenLiteral}]; return true; })()`;
 
   return new Promise((resolve, reject) => {
-    const timeout = window.setTimeout(() => reject(new Error("解释请求超时，请检查接口响应或页面跨域策略。")), 60000);
+    let settled = false;
+    let pollTimer = null;
+    const watchdog = window.setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      if (pollTimer !== null) window.clearTimeout(pollTimer);
+      try {
+        chrome.devtools.inspectedWindow.eval(cleanupExpression, () => {});
+      } catch {
+        // The inspected page may have navigated while the request was running.
+      }
+      reject(new Error("解释请求超时，请检查接口响应或页面跨域策略。"));
+    }, 65000);
+    const finish = (callback) => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(watchdog);
+      if (pollTimer !== null) window.clearTimeout(pollTimer);
+      callback();
+    };
+
     chrome.devtools.inspectedWindow.eval(expression, (started, exception) => {
       if (exception || !started) {
-        window.clearTimeout(timeout);
-        reject(new Error(exception?.value || exception?.description || "无法在当前页面启动解释请求。"));
+        finish(() => reject(new Error(exception?.value || exception?.description || "无法在当前页面启动解释请求。")));
         return;
       }
       const poll = () => chrome.devtools.inspectedWindow.eval(
-        `(() => { const result = window[${tokenLiteral}]; if (result?.done) delete window[${tokenLiteral}]; return result || null; })()`,
+        pollExpression,
         (result, pollException) => {
           if (pollException) {
-            window.clearTimeout(timeout);
-            reject(new Error("无法读取解释请求结果；页面可能已导航。"));
+            finish(() => reject(new Error("无法读取解释请求结果；页面可能已导航。")));
           }
           else if (result?.done) {
-            window.clearTimeout(timeout);
-            if (result.error) reject(new Error(`解释请求失败：${result.error}`));
-            else if (!result.ok) reject(new Error(`解释接口返回 HTTP ${result.status}：${result.text.slice(0, 300)}`));
-            else resolve({ text: result.text, encryption: result.encryption });
-          } else window.setTimeout(poll, 150);
+            finish(() => {
+              if (result.error) reject(new Error(`解释请求失败：${result.error}`));
+              else if (!result.ok) reject(new Error(`解释接口返回 HTTP ${result.status}：${result.text.slice(0, 300)}`));
+              else resolve({ text: result.text, encryption: result.encryption });
+            });
+          } else if (!settled) pollTimer = window.setTimeout(poll, 150);
         },
       );
       poll();
@@ -1150,7 +1215,10 @@ requestList.addEventListener("click", (event) => {
   renderDetails();
 });
 
-searchInput.addEventListener("input", renderList);
+searchInput.addEventListener("input", () => {
+  renderList();
+  renderDetails();
+});
 globalSearchButton.addEventListener("click", () => {
   globalSearchInput.value = "";
   globalSearchResults.replaceChildren();
@@ -1191,6 +1259,7 @@ for (const button of requestFilterButtons) {
       filterButton.setAttribute("aria-pressed", String(active));
     }
     renderList();
+    renderDetails();
   });
 }
 clearRequestsButton.addEventListener("click", clearRecords);
@@ -1232,6 +1301,14 @@ resizeDivider.addEventListener("pointermove", (event) => {
 });
 function finishSidebarResize() {
   document.body.classList.remove("is-resizing");
+  const width = Math.round(requestSidebar.getBoundingClientRect().width);
+  if (isProfessionalLayout()) {
+    try {
+      localStorage.setItem(PROFESSIONAL_SIDEBAR_WIDTH_STORAGE_KEY, String(width));
+    } catch {
+      // Resizing remains available when local storage is unavailable.
+    }
+  }
 }
 resizeDivider.addEventListener("pointerup", finishSidebarResize);
 resizeDivider.addEventListener("pointercancel", finishSidebarResize);
@@ -1241,19 +1318,30 @@ resizeDivider.addEventListener("keydown", (event) => {
   event.preventDefault();
   const direction = event.key === "ArrowLeft" ? -16 : 16;
   applySidebarWidth(requestSidebar.getBoundingClientRect().width + direction);
+  finishSidebarResize();
 });
 window.addEventListener("resize", () => applySidebarWidth(requestSidebar.getBoundingClientRect().width));
-applySidebarWidth(requestSidebar.getBoundingClientRect().width || workspace.getBoundingClientRect().width * 0.182);
+applySidebarWidth(configuredProfessionalSidebarWidth() || workspace.getBoundingClientRect().width * 0.3);
 
 rawModeToggle.addEventListener("change", () => {
   rawMode = rawModeToggle.checked;
   renderDetails();
 });
 
+themeToggleButton.addEventListener("click", () => {
+  const nextTheme = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+  try {
+    localStorage.setItem(THEME_STORAGE_KEY, nextTheme);
+  } catch {
+    // The toggle remains usable for the current panel session.
+  }
+  applyTheme(nextTheme);
+  applyThemeLayout();
+});
+
 openSettingsButton.addEventListener("click", () => {
   settingsMethod.value = configuredEncryptionMethod();
   settingsKey.value = configuredAesKey();
-  themeSelect.value = configuredTheme();
   settingsSqlBlockedMarkers.value = configuredSqlBlockedMarkers().join("\n");
   updateEncryptionSettings();
   settingsError.hidden = true;
@@ -1264,13 +1352,31 @@ settingsMethod.addEventListener("change", () => {
   settingsError.hidden = true;
   updateEncryptionSettings();
 });
+requestListModeToggle.addEventListener("click", () => {
+  if (!isProfessionalLayout()) return;
+  const previousMode = document.documentElement.dataset.requestListMode;
+  const nextMode = document.documentElement.dataset.requestListMode === "minimal" ? "detailed" : "minimal";
+  try {
+    localStorage.setItem(PROFESSIONAL_LIST_MODE_STORAGE_KEY, nextMode);
+  } catch {
+    // The toggle remains usable for the current panel session.
+  }
+  resizeSidebarForRequestListMode(previousMode, nextMode);
+  document.documentElement.dataset.requestListMode = nextMode;
+  updateRequestListModeToggle();
+  renderList();
+  renderDetails();
+});
 
 cancelSettingsButton.addEventListener("click", () => settingsDialog.close());
 resetDefaultKeyButton.addEventListener("click", () => {
   try {
     localStorage.removeItem(AES_KEY_STORAGE_KEY);
     localStorage.removeItem(ENCRYPTION_METHOD_STORAGE_KEY);
+    localStorage.removeItem(THEME_STORAGE_KEY);
     localStorage.removeItem(SQL_BLOCKED_MARKERS_STORAGE_KEY);
+    localStorage.removeItem(PROFESSIONAL_LIST_MODE_STORAGE_KEY);
+    localStorage.removeItem(PROFESSIONAL_SIDEBAR_WIDTH_STORAGE_KEY);
   } catch {
     settingsError.textContent = "无法恢复默认设置，请检查浏览器的扩展存储设置。";
     settingsError.hidden = false;
@@ -1282,8 +1388,9 @@ resetDefaultKeyButton.addEventListener("click", () => {
   settingsSqlBlockedMarkers.value = DEFAULT_SQL_BLOCKED_MARKERS.join("\n");
   updateEncryptionSettings();
   invalidateDecodedRecords();
+  applyTheme(configuredTheme());
+  applyThemeLayout();
   settingsDialog.close();
-  renderDetails();
 });
 settingsForm.addEventListener("submit", (event) => {
   event.preventDefault();
@@ -1300,7 +1407,6 @@ settingsForm.addEventListener("submit", (event) => {
   try {
     localStorage.setItem(AES_KEY_STORAGE_KEY, key);
     localStorage.setItem(ENCRYPTION_METHOD_STORAGE_KEY, method);
-    localStorage.setItem(THEME_STORAGE_KEY, themeSelect.value);
     localStorage.setItem(
       SQL_BLOCKED_MARKERS_STORAGE_KEY,
       parseSqlBlockedMarkers(settingsSqlBlockedMarkers.value).join("\n"),
@@ -1311,10 +1417,8 @@ settingsForm.addEventListener("submit", (event) => {
     return;
   }
 
-  applyTheme(themeSelect.value);
   invalidateDecodedRecords();
   settingsDialog.close();
-  renderDetails();
 });
 
 function addRequest(entry, options = {}) {
