@@ -1,6 +1,8 @@
 const results = document.getElementById("results");
 const runButtons = [...document.querySelectorAll("[data-run]")];
 
+document.cookie = "niuniu_test_session=mock-session; SameSite=Lax; Path=/";
+
 const requests = {
   plain: () => fetch("/api/plain?source=button"),
   encrypted: () => fetch("/api/encrypted?source=button"),

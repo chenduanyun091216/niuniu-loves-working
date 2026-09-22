@@ -1,7 +1,7 @@
 from pathlib import Path
 from typing import Any
 
-from fastapi import Body, FastAPI, Header, Query
+from fastapi import Body, FastAPI, Header, Query, Request
 from fastapi.responses import PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -15,13 +15,40 @@ ENCRYPTED_JSON = (
 app = FastAPI(title="牛牛爱上班 API 测试站")
 
 
+async def mock_sql_explain(request: Request) -> PlainTextResponse:
+    body = await request.body()
+    source = request.query_params.get("source", "").replace("\r", " ").replace("\n", " ")[:120]
+    demo_header = request.headers.get("x-demo-header", "(missing)").replace("\r", " ").replace("\n", " ")[:120]
+    sql = "\n".join((
+        "-- Mock SQL explain response",
+        f"-- method: {request.method}",
+        f"-- query parameter count: {len(request.query_params)}",
+        f"-- source parameter: {source}",
+        f"-- body bytes: {len(body)}",
+        f"-- mock cookie received: {'yes' if 'niuniu_test_session' in request.cookies else 'no'}",
+        f"-- x-demo-header: {demo_header}",
+        "SELECT id, name, active",
+        "FROM demo_items",
+        "WHERE source = 'mock'",
+        "ORDER BY id",
+        "LIMIT 20;",
+    ))
+    return PlainTextResponse(sql, headers={"X-Test-Mode": "sql-explain"})
+
+
 @app.get("/", include_in_schema=False)
 async def home() -> RedirectResponse:
     return RedirectResponse(url="/test/")
 
 
 @app.get("/api/plain")
-async def plain_response(source: str = Query(default="button")) -> dict[str, Any]:
+async def plain_response(
+    request: Request,
+    source: str = Query(default="button"),
+    is_explain: bool = Query(default=False, alias="isExplain"),
+) -> Any:
+    if is_explain:
+        return await mock_sql_explain(request)
     return {
         "success": True,
         "mode": "plain",
@@ -31,7 +58,13 @@ async def plain_response(source: str = Query(default="button")) -> dict[str, Any
 
 
 @app.get("/api/encrypted", response_class=PlainTextResponse)
-async def encrypted_response(source: str = Query(default="button")) -> PlainTextResponse:
+async def encrypted_response(
+    request: Request,
+    source: str = Query(default="button"),
+    is_explain: bool = Query(default=False, alias="isExplain"),
+) -> PlainTextResponse:
+    if is_explain:
+        return await mock_sql_explain(request)
     return PlainTextResponse(
         ENCRYPTED_JSON,
         media_type="text/plain",
@@ -40,7 +73,13 @@ async def encrypted_response(source: str = Query(default="button")) -> PlainText
 
 
 @app.get("/api/partial")
-async def partial_response(source: str = Query(default="button")) -> dict[str, Any]:
+async def partial_response(
+    request: Request,
+    source: str = Query(default="button"),
+    is_explain: bool = Query(default=False, alias="isExplain"),
+) -> Any:
+    if is_explain:
+        return await mock_sql_explain(request)
     return {
         "status": 200,
         "source": source,
@@ -51,9 +90,13 @@ async def partial_response(source: str = Query(default="button")) -> dict[str, A
 
 @app.post("/api/base64")
 async def base64_response(
+    request: Request,
     payload: dict[str, Any] = Body(...),
     filter_value: str = Query(default="", alias="filter"),
-) -> dict[str, Any]:
+    is_explain: bool = Query(default=False, alias="isExplain"),
+) -> Any:
+    if is_explain:
+        return await mock_sql_explain(request)
     return {
         "filter": filter_value,
         "payload": payload,
@@ -64,10 +107,14 @@ async def base64_response(
 
 @app.post("/api/echo")
 async def echo_request(
+    request: Request,
     payload: dict[str, Any] = Body(...),
     source: str = Query(default="button"),
     x_demo_header: str = Header(default=""),
-) -> dict[str, Any]:
+    is_explain: bool = Query(default=False, alias="isExplain"),
+) -> Any:
+    if is_explain:
+        return await mock_sql_explain(request)
     return {
         "success": True,
         "mode": "plain-echo",

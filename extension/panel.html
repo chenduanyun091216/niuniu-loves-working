@@ -34,7 +34,7 @@
           <span aria-hidden="true">⌕</span>
           <input id="request-search" type="search" placeholder="筛选接口" aria-label="筛选接口">
         </label>
-        <button id="clear-requests" class="icon-button" type="button" title="清空请求" aria-label="清空请求">清空</button>
+        <button id="clear-requests" class="icon-button clear-button" type="button" title="清空请求" aria-label="清空请求"><span class="button-icon" aria-hidden="true">⌫</span><span>清空</span></button>
       </div>
       <div class="list-heading"><span>Name</span></div>
       <div id="request-list" class="request-list" role="listbox" aria-label="接口请求">
@@ -62,12 +62,19 @@
           </div>
         </div>
         <nav class="detail-tabs" aria-label="请求信息">
-          <button type="button" data-tab="headers" class="active">Headers</button>
-          <button type="button" data-tab="payload">Payload</button>
-          <button type="button" data-tab="preview">Preview</button>
-          <button type="button" data-tab="response">Response</button>
+          <button type="button" data-tab="headers" class="active"><span class="tab-icon" aria-hidden="true">☷</span><span>Headers</span></button>
+          <button type="button" data-tab="payload"><span class="tab-icon" aria-hidden="true">⇩</span><span>Payload</span></button>
+          <button type="button" data-tab="preview"><span class="tab-icon" aria-hidden="true">◉</span><span>Preview</span></button>
+          <button type="button" data-tab="response"><span class="tab-icon" aria-hidden="true">▤</span><span>Response</span></button>
+          <button type="button" data-tab="sql"><span class="tab-icon" aria-hidden="true">⌘</span><span>获取SQL</span></button>
         </nav>
         <div id="detail-content" class="detail-content"></div>
+        <div id="response-search" class="response-search" hidden>
+          <span class="response-search-icon" aria-hidden="true">⌕</span>
+          <input id="response-search-input" type="search" placeholder="搜索 Response" aria-label="搜索 Response">
+          <span id="response-search-count" class="response-search-count">0 个匹配</span>
+          <button id="response-search-clear" class="response-search-clear" type="button" aria-label="清除搜索">×</button>
+        </div>
       </div>
     </section>
   </main>
@@ -79,7 +86,14 @@
         <span>AES 密钥</span>
         <input id="aes-key" type="password" autocomplete="off" spellcheck="false" required>
       </label>
-      <p class="settings-hint">密钥只保存在此扩展的本地配置中。UTF-8 长度需为 16、24 或 32 字节。</p>
+      <label class="settings-field" for="theme-select">
+        <span>主题</span>
+        <select id="theme-select">
+          <option value="light">亮色主题</option>
+          <option value="dark">暗色主题</option>
+        </select>
+      </label>
+      <p class="settings-hint">密钥和主题只保存在此扩展的本地配置中。UTF-8 长度需为 16、24 或 32 字节。</p>
       <p id="settings-error" class="settings-error" role="alert" hidden></p>
       <div class="settings-actions">
         <button id="reset-default-key" class="secondary-button" type="button">恢复默认</button>

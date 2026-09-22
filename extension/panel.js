@@ -10,14 +10,22 @@ const resizeDivider = document.getElementById("resize-divider");
 const detailsEmpty = document.getElementById("details-empty");
 const detailsView = document.getElementById("details-view");
 const detailContent = document.getElementById("detail-content");
+const responseSearch = document.getElementById("response-search");
+const responseSearchInput = document.getElementById("response-search-input");
+const responseSearchCount = document.getElementById("response-search-count");
+const responseSearchClear = document.getElementById("response-search-clear");
 const records = [];
 let selectedId = null;
 let activeTab = "headers";
+let responseSearchTerm = "";
 let nextId = 1;
+const SQL_KEYWORDS = new Set("ADD ALL ALTER AND ANY AS ASC BETWEEN BY CASE CAST COLLATE COLUMN COMMIT CONSTRAINT CREATE CROSS CURRENT_DATE CURRENT_TIME CURRENT_TIMESTAMP DATABASE DEFAULT DELETE DESC DISTINCT DROP ELSE END EXCEPT EXISTS FALSE FETCH FIRST FOR FOREIGN FROM FULL GRANT GROUP HAVING IN INDEX INNER INSERT INTERSECT INTO IS JOIN KEY LEFT LIKE LIMIT NOT NULL OFFSET ON OR ORDER OUTER PRIMARY REFERENCES RETURNING RIGHT ROLLBACK ROW SELECT SET TABLE THEN TRUE UNION UNIQUE UPDATE USING VALUES WHEN WHERE WITH".split(" "));
 const AES_KEY_STORAGE_KEY = "niuniu-aes-key";
+const THEME_STORAGE_KEY = "niuniu-theme";
 const settingsDialog = document.getElementById("settings-dialog");
 const settingsForm = document.getElementById("settings-form");
 const settingsKey = document.getElementById("aes-key");
+const themeSelect = document.getElementById("theme-select");
 const settingsError = document.getElementById("settings-error");
 const rawModeToggle = document.getElementById("raw-mode-toggle");
 let rawMode = false;
@@ -30,6 +38,22 @@ function configuredAesKey() {
     return DEFAULT_AES_KEY;
   }
 }
+
+function configuredTheme() {
+  try {
+    const savedTheme = localStorage.getItem(THEME_STORAGE_KEY);
+    if (savedTheme === "light" || savedTheme === "dark") return savedTheme;
+  } catch {
+    // Fall back to the system theme when local storage is unavailable.
+  }
+  return window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+}
+
+function applyTheme(theme) {
+  document.documentElement.dataset.theme = theme;
+}
+
+applyTheme(configuredTheme());
 
 function responseMimeType(entry) {
   const contentType = entry.response?.content?.mimeType || "";
@@ -122,6 +146,14 @@ function requestName(url) {
   }
 }
 
+function isExplainRequest(url) {
+  try {
+    return new URL(url).searchParams.get("isExplain") === "true";
+  } catch {
+    return false;
+  }
+}
+
 function hasJsonResponse(entry) {
   const mimeType = responseMimeType(entry);
   return !mimeType || /json|graphql/.test(mimeType);
@@ -156,9 +188,10 @@ function renderList() {
 
     const icon = document.createElement("span");
     const jsonResponse = hasJsonResponse(record.entry);
-    icon.className = `request-type-icon${jsonResponse ? " json" : " text"}`;
-    icon.textContent = jsonResponse ? "{}" : "<>";
-    icon.title = jsonResponse ? "JSON" : "文本";
+    const explainRequest = isExplainRequest(request.url);
+    icon.className = `request-type-icon${explainRequest ? " explain" : jsonResponse ? " json" : " text"}`;
+    icon.textContent = explainRequest ? "SQL" : jsonResponse ? "{}" : "<>";
+    icon.title = explainRequest ? "SQL 解释请求" : jsonResponse ? "JSON" : "文本";
     icon.setAttribute("aria-hidden", "true");
     const name = document.createElement("span");
     name.className = "request-name";
@@ -207,6 +240,39 @@ function createCodeView(text, isJson = false) {
     pre.append(token);
   }
   return pre;
+}
+
+function highlightResponseMatches(container, term) {
+  const normalizedTerm = term.trim().toLocaleLowerCase();
+  if (!normalizedTerm) return 0;
+
+  const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
+  const textNodes = [];
+  while (walker.nextNode()) textNodes.push(walker.currentNode);
+
+  let matchCount = 0;
+  for (const textNode of textNodes) {
+    const text = textNode.nodeValue;
+    const lowerText = text.toLocaleLowerCase();
+    let offset = 0;
+    const fragment = document.createDocumentFragment();
+    let matchIndex = lowerText.indexOf(normalizedTerm, offset);
+    if (matchIndex < 0) continue;
+
+    while (matchIndex >= 0) {
+      if (matchIndex > offset) fragment.append(document.createTextNode(text.slice(offset, matchIndex)));
+      const mark = document.createElement("mark");
+      mark.className = "response-match";
+      mark.textContent = text.slice(matchIndex, matchIndex + normalizedTerm.length);
+      fragment.append(mark);
+      matchCount += 1;
+      offset = matchIndex + normalizedTerm.length;
+      matchIndex = lowerText.indexOf(normalizedTerm, offset);
+    }
+    if (offset < text.length) fragment.append(document.createTextNode(text.slice(offset)));
+    textNode.replaceWith(fragment);
+  }
+  return matchCount;
 }
 
 function formatRawJson(text) {
@@ -315,6 +381,14 @@ function createNote(text) {
   return note;
 }
 
+function setButtonLabel(button, icon, label) {
+  const iconElement = document.createElement("span");
+  iconElement.className = "button-icon";
+  iconElement.setAttribute("aria-hidden", "true");
+  iconElement.textContent = icon;
+  button.replaceChildren(iconElement, document.createTextNode(label));
+}
+
 function responseFor(record) {
   if (record.bodyError) return null;
   if (!record.bodyReady) return null;
@@ -407,7 +481,146 @@ function renderBodyTab(record, tab) {
   }
 
   const text = decoded.isJson ? JSON.stringify(decoded.value, null, 2) : decoded.text;
-  detailContent.append(createCodeView(text, decoded.isJson));
+  const codeView = createCodeView(text, decoded.isJson);
+  detailContent.append(codeView);
+  if (tab === "response") {
+    const matchCount = highlightResponseMatches(codeView, responseSearchTerm);
+    responseSearchCount.textContent = responseSearchTerm.trim() ? `${matchCount} 个匹配` : "";
+  }
+}
+
+function createSqlView(sql) {
+  const fragment = document.createDocumentFragment();
+  const tokens = /(\/\*[\s\S]*?\*\/|--[^\r\n]*|(?:'(?:''|\\.|[^'\\])*'|"(?:""|\\.|[^"\\])*"|`(?:``|[^`])*`)|\b\d+(?:\.\d+)?\b|[A-Za-z_][A-Za-z0-9_$]*|<=|>=|<>|!=|:=|[-+*/%=<>])/g;
+  let offset = 0;
+  for (const match of sql.matchAll(tokens)) {
+    if (match.index > offset) fragment.append(document.createTextNode(sql.slice(offset, match.index)));
+    const token = match[0];
+    const span = document.createElement("span");
+    const upper = token.toUpperCase();
+    span.className = token.startsWith("--") || token.startsWith("/*") ? "sql-comment"
+      : token.startsWith("'") ? "sql-string"
+        : /^\d/.test(token) ? "sql-number"
+          : SQL_KEYWORDS.has(upper) ? "sql-keyword"
+            : /^["`A-Za-z_]/.test(token) ? "sql-identifier"
+              : "sql-operator";
+    span.textContent = token;
+    fragment.append(span);
+    offset = match.index + token.length;
+  }
+  if (offset < sql.length) fragment.append(document.createTextNode(sql.slice(offset)));
+  const view = document.createElement("pre");
+  view.className = "code-view";
+  view.append(fragment);
+  return view;
+}
+
+function requestExplainSql(record) {
+  const request = record.entry.request;
+  const url = new URL(request.url);
+  url.searchParams.set("isExplain", "true");
+
+  const method = String(request.method || "GET").toUpperCase();
+  const postData = request.postData;
+  if (postData?.params?.some((param) => param.fileName)) {
+    throw new Error("当前请求包含无法从 DevTools 记录中重放的文件内容。");
+  }
+  if (postData && typeof postData.text !== "string" && postData.params?.length) {
+    throw new Error("当前请求的表单 body 不完整，无法保证参数一致。");
+  }
+
+  const excludedHeaders = /^(accept-encoding|connection|content-length|cookie|host|origin|referer|sec-|:)/i;
+  const headers = (request.headers || []).filter(({ name }) => name && !excludedHeaders.test(name))
+    .map(({ name, value }) => [name, value]);
+  const config = {
+    url: url.href,
+    method,
+    headers,
+    body: ["GET", "HEAD"].includes(method) ? null : (postData?.text ?? null),
+  };
+  const key = `__niuniuExplain_${crypto.randomUUID().replaceAll("-", "")}`;
+  const configLiteral = JSON.stringify(JSON.stringify(config));
+  const tokenLiteral = JSON.stringify(key);
+  const expression = `(() => { const key = ${tokenLiteral}; const config = JSON.parse(${configLiteral}); window[key] = { done: false }; fetch(config.url, { method: config.method, headers: config.headers, body: config.body, credentials: "include" }).then(async response => { window[key] = { done: true, ok: response.ok, status: response.status, text: await response.text() }; }).catch(error => { window[key] = { done: true, error: String(error) }; }); return true; })()`;
+
+  return new Promise((resolve, reject) => {
+    const timeout = window.setTimeout(() => reject(new Error("解释请求超时，请检查接口响应或页面跨域策略。")), 60000);
+    chrome.devtools.inspectedWindow.eval(expression, (started, exception) => {
+      if (exception || !started) {
+        window.clearTimeout(timeout);
+        reject(new Error(exception?.value || exception?.description || "无法在当前页面启动解释请求。"));
+        return;
+      }
+      const poll = () => chrome.devtools.inspectedWindow.eval(
+        `(() => { const result = window[${tokenLiteral}]; if (result?.done) delete window[${tokenLiteral}]; return result || null; })()`,
+        (result, pollException) => {
+          if (pollException) {
+            window.clearTimeout(timeout);
+            reject(new Error("无法读取解释请求结果；页面可能已导航。"));
+          }
+          else if (result?.done) {
+            window.clearTimeout(timeout);
+            if (result.error) reject(new Error(`解释请求失败：${result.error}`));
+            else if (!result.ok) reject(new Error(`解释接口返回 HTTP ${result.status}：${result.text.slice(0, 300)}`));
+            else resolve(result.text);
+          } else window.setTimeout(poll, 150);
+        },
+      );
+      poll();
+    });
+  });
+}
+
+function renderSqlTab(record) {
+  const toolbar = document.createElement("div");
+  toolbar.className = "sql-toolbar";
+  const actions = document.createElement("div");
+  actions.className = "sql-actions";
+  const fetchButton = document.createElement("button");
+  fetchButton.type = "button";
+  fetchButton.className = "sql-copy-button";
+  setButtonLabel(fetchButton, "↗", record.sqlLoading ? "获取中…" : "获取 SQL");
+  fetchButton.disabled = record.sqlLoading;
+  fetchButton.addEventListener("click", async () => {
+    record.sqlLoading = true;
+    record.sqlError = "";
+    renderDetails();
+    try {
+      const rawSql = await requestExplainSql(record);
+      const decodedSql = decodeResponse(rawSql, configuredAesKey());
+      const sqlText = (typeof decodedSql.value === "string" ? decodedSql.value : decodedSql.text).trim();
+      if (!sqlText) throw new Error("解释接口返回了空 SQL。");
+      record.sqlText = sqlText;
+    } catch (error) {
+      record.sqlError = error.message || "获取 SQL 失败。";
+    } finally {
+      record.sqlLoading = false;
+      if (records.includes(record) && selectedId === record.id && activeTab === "sql") renderDetails();
+    }
+  });
+  const copyButton = document.createElement("button");
+  copyButton.type = "button";
+  copyButton.className = "sql-copy-button";
+  setButtonLabel(copyButton, "⧉", "复制 SQL");
+  copyButton.disabled = !record.sqlText;
+  copyButton.addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(record.sqlText);
+      setButtonLabel(copyButton, "✓", "已复制");
+    } catch {
+      setButtonLabel(copyButton, "!", "复制失败");
+    }
+    window.setTimeout(() => { setButtonLabel(copyButton, "⧉", "复制 SQL"); }, 1200);
+  });
+  actions.append(fetchButton, copyButton);
+  const state = createNote(record.sqlLoading
+    ? "正在获取 SQL…"
+    : record.sqlError || (record.sqlText ? "" : "点击“获取 SQL”后，将使用当前请求参数和浏览器登录态请求解释接口。"));
+  state.classList.add("sql-state");
+  toolbar.append(actions, state);
+  detailContent.append(toolbar);
+
+  if (record.sqlText) detailContent.append(createSqlView(record.sqlText));
 }
 
 function renderDetails() {
@@ -420,6 +633,9 @@ function renderDetails() {
 
   detailsEmpty.hidden = true;
   detailsView.hidden = false;
+  responseSearch.hidden = activeTab !== "response";
+  responseSearchInput.value = activeTab === "response" ? responseSearchTerm : "";
+  responseSearchCount.textContent = activeTab === "response" && responseSearchTerm.trim() ? "0 个匹配" : "";
   detailContent.dataset.tab = activeTab;
   document.getElementById("detail-method").textContent = record.entry.request.method || "GET";
   document.getElementById("detail-url").textContent = record.entry.request.url;
@@ -433,6 +649,7 @@ function renderDetails() {
   detailContent.replaceChildren();
   if (activeTab === "headers") renderHeaders(record);
   else if (activeTab === "payload") renderPayload(record);
+  else if (activeTab === "sql") renderSqlTab(record);
   else renderBodyTab(record, activeTab);
 
   document.querySelectorAll(".detail-tabs button").forEach((button) => {
@@ -465,6 +682,23 @@ document.querySelector(".detail-tabs").addEventListener("click", (event) => {
   renderDetails();
 });
 
+responseSearchInput.addEventListener("input", () => {
+  responseSearchTerm = responseSearchInput.value;
+  renderDetails();
+});
+responseSearchInput.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape") return;
+  responseSearchTerm = "";
+  responseSearchInput.value = "";
+  renderDetails();
+});
+responseSearchClear.addEventListener("click", () => {
+  responseSearchTerm = "";
+  responseSearchInput.value = "";
+  responseSearchInput.focus();
+  renderDetails();
+});
+
 resizeDivider.addEventListener("pointerdown", (event) => {
   if (event.button !== 0) return;
   resizeDivider.setPointerCapture(event.pointerId);
@@ -489,7 +723,7 @@ resizeDivider.addEventListener("keydown", (event) => {
   applySidebarWidth(requestSidebar.getBoundingClientRect().width + direction);
 });
 window.addEventListener("resize", () => applySidebarWidth(requestSidebar.getBoundingClientRect().width));
-applySidebarWidth(requestSidebar.getBoundingClientRect().width || workspace.getBoundingClientRect().width * 0.26);
+applySidebarWidth(requestSidebar.getBoundingClientRect().width || workspace.getBoundingClientRect().width * 0.182);
 
 rawModeToggle.addEventListener("change", () => {
   rawMode = rawModeToggle.checked;
@@ -498,6 +732,7 @@ rawModeToggle.addEventListener("change", () => {
 
 document.getElementById("open-settings").addEventListener("click", () => {
   settingsKey.value = configuredAesKey();
+  themeSelect.value = configuredTheme();
   settingsError.hidden = true;
   settingsDialog.showModal();
 });
@@ -528,12 +763,14 @@ settingsForm.addEventListener("submit", (event) => {
 
   try {
     localStorage.setItem(AES_KEY_STORAGE_KEY, key);
+    localStorage.setItem(THEME_STORAGE_KEY, themeSelect.value);
   } catch {
     settingsError.textContent = "无法保存密钥，请检查浏览器的扩展存储设置。";
     settingsError.hidden = false;
     return;
   }
 
+  applyTheme(themeSelect.value);
   for (const record of records) record.decoded = null;
   settingsDialog.close();
   renderDetails();

@@ -21,7 +21,7 @@
       <div>
         <p class="eyebrow">EXTENSION CHECK</p>
         <h2>点按钮发请求，在面板里查看结果</h2>
-        <p>先打开本页的开发者工具并选择「牛牛爱上班」，然后运行下面的接口样例。</p>
+        <p>先打开本页的开发者工具并选择「牛牛爱上班」，然后运行下面的接口样例。选中任一请求后打开「获取SQL」页签，可测试带原请求参数和本地 mock Cookie 的 SQL 解释流程。</p>
       </div>
       <button id="run-all" class="primary-button" type="button">运行全部样例 <span aria-hidden="true">→</span></button>
     </section>
@@ -63,7 +63,7 @@
         <div class="card-heading"><span class="method post">POST</span><span class="endpoint-kind">Header + Payload</span></div>
         <h3>请求回显</h3>
         <code>/api/echo?source=button</code>
-        <p>发送自定义 Header 和 JSON Payload，服务器以普通 JSON 回显。</p>
+        <p>发送自定义 Header 和 JSON Payload，服务器以普通 JSON 回显；也可用它测试 SQL 请求是否保留 Header、Payload 和本地 mock Cookie。</p>
         <button class="run-button" data-run="echo" type="button">发送 POST 请求</button>
       </article>
     </section>
