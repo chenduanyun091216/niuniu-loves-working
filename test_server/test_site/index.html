@@ -35,6 +35,22 @@
         <button class="run-button" data-run="plain" type="button">发送 GET 请求</button>
       </article>
 
+      <article class="endpoint-card">
+        <div class="card-heading"><span class="method get">GET</span><span class="endpoint-kind">对象列表</span></div>
+        <h3>直接表格数据</h3>
+        <code>/api/table?source=button</code>
+        <p>直接返回对象列表，不使用 <code>data</code> 包装，验证插件自动识别表格。</p>
+        <button class="run-button" data-run="table" type="button">发送 GET 请求</button>
+      </article>
+
+      <article class="endpoint-card">
+        <div class="card-heading"><span class="method get">GET</span><span class="endpoint-kind">图片文件</span></div>
+        <h3>PNG 图片响应</h3>
+        <code>/api/image</code>
+        <p>返回真实 PNG 二进制内容，验证 Preview 图片展示和 Response 不阻塞。</p>
+        <button class="run-button" data-run="image" type="button">发送 GET 请求</button>
+      </article>
+
       <article class="endpoint-card featured">
         <div class="card-heading"><span class="method get">GET</span><span class="endpoint-kind encrypted">AES 加密</span></div>
         <h3>加密响应</h3>
@@ -83,6 +99,6 @@
 
     <footer>FastAPI 本地服务 · 作者 Mr.Chen</footer>
   </main>
-  <script src="/test/test.js"></script>
+  <script src="/test/test.js?v=table-endpoint"></script>
 </body>
 </html>

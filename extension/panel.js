@@ -1,10 +1,16 @@
 import { DEFAULT_AES_KEY, DEFAULT_ENCRYPTION_METHOD, getEncryptionMethod } from "./crypto.js";
 import { decodeDataValue, decodeResponse } from "./response-utils.js";
-import { extractSql } from "./sql-utils.js";
+import {
+  DEFAULT_SQL_BLOCKED_MARKERS,
+  extractSql,
+  findSqlBlockedMarker,
+  parseSqlBlockedMarkers,
+} from "./sql-utils.js";
 
 const requestList = document.getElementById("request-list");
 const requestCount = document.getElementById("request-count");
 const searchInput = document.getElementById("request-search");
+const topbar = document.querySelector(".topbar");
 const workspace = document.querySelector(".workspace");
 const requestSidebar = document.querySelector(".request-sidebar");
 const resizeDivider = document.getElementById("resize-divider");
@@ -16,9 +22,14 @@ const responseSearchInput = document.getElementById("response-search-input");
 const responseSearchCount = document.getElementById("response-search-count");
 const responseSearchClear = document.getElementById("response-search-clear");
 const clearRequestsButton = document.getElementById("clear-requests");
+const requestFilterButtons = [...document.querySelectorAll("[data-request-filter]")];
+const globalSearchButton = document.getElementById("global-search");
+const reloadPageButton = document.getElementById("reload-page");
 const openSettingsButton = document.getElementById("open-settings");
 const detailTabs = document.querySelector(".detail-tabs");
 const detailTabButtons = [...detailTabs.querySelectorAll("button")];
+const tableTabButton = document.getElementById("table-tab");
+const sqlTabButton = detailTabs.querySelector('[data-tab="sql"]');
 const detailMethod = document.getElementById("detail-method");
 const detailUrl = document.getElementById("detail-url");
 const detailStatus = document.getElementById("detail-status");
@@ -29,19 +40,30 @@ let selectedId = null;
 let activeTab = "headers";
 let responseSearchTerm = "";
 let nextId = 1;
+let requestFilter = "fetch-xhr";
 const SQL_KEYWORDS = new Set("ADD ALL ALTER AND ANY AS ASC BETWEEN BY CASE CAST COLLATE COLUMN COMMIT CONSTRAINT CREATE CROSS CURRENT_DATE CURRENT_TIME CURRENT_TIMESTAMP DATABASE DEFAULT DELETE DESC DISTINCT DROP ELSE END EXCEPT EXISTS FALSE FETCH FIRST FOR FOREIGN FROM FULL GRANT GROUP HAVING IN INDEX INNER INSERT INTERSECT INTO IS JOIN KEY LEFT LIKE LIMIT NOT NULL OFFSET ON OR ORDER OUTER PRIMARY REFERENCES RETURNING RIGHT ROLLBACK ROW SELECT SET TABLE THEN TRUE UNION UNIQUE UPDATE USING VALUES WHEN WHERE WITH".split(" "));
 const AES_KEY_STORAGE_KEY = "niuniu-aes-key";
 const ENCRYPTION_METHOD_STORAGE_KEY = "niuniu-encryption-method";
 const THEME_STORAGE_KEY = "niuniu-theme";
+const SQL_BLOCKED_MARKERS_STORAGE_KEY = "niuniu-sql-blocked-markers";
 const settingsDialog = document.getElementById("settings-dialog");
 const settingsForm = document.getElementById("settings-form");
 const settingsMethod = document.getElementById("encryption-method");
 const settingsKey = document.getElementById("aes-key");
 const themeSelect = document.getElementById("theme-select");
+const settingsSqlBlockedMarkers = document.getElementById("sql-blocked-markers");
 const settingsHint = document.querySelector(".settings-hint");
 const settingsError = document.getElementById("settings-error");
 const cancelSettingsButton = document.getElementById("cancel-settings");
 const resetDefaultKeyButton = document.getElementById("reset-default-key");
+const sqlConfirmDialog = document.getElementById("sql-confirm-dialog");
+const sqlConfirmSummary = document.getElementById("sql-confirm-summary");
+const sqlConfirmUrl = document.getElementById("sql-confirm-url");
+const globalSearchDialog = document.getElementById("global-search-dialog");
+const globalSearchInput = document.getElementById("global-search-input");
+const globalSearchSubmit = document.getElementById("global-search-submit");
+const globalSearchStatus = document.getElementById("global-search-status");
+const globalSearchResults = document.getElementById("global-search-results");
 const rawModeToggle = document.getElementById("raw-mode-toggle");
 let rawMode = false;
 const JSON_TOKEN_PATTERN = /("(?:\\.|[^"\\])*"(?=\s*:))|("(?:\\.|[^"\\])*")|(-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?)|\b(true|false)\b|\b(null)\b|([{}\[\],:])|(\s+)|([\s\S])/gy;
@@ -63,14 +85,38 @@ function configuredEncryptionMethod() {
   }
 }
 
+function configuredSqlBlockedMarkers() {
+  try {
+    const savedMarkers = localStorage.getItem(SQL_BLOCKED_MARKERS_STORAGE_KEY);
+    return savedMarkers === null ? [...DEFAULT_SQL_BLOCKED_MARKERS] : parseSqlBlockedMarkers(savedMarkers);
+  } catch {
+    return [...DEFAULT_SQL_BLOCKED_MARKERS];
+  }
+}
+
+function sqlBlockedMarkerFor(record) {
+  return findSqlBlockedMarker(record.entry.request?.url, configuredSqlBlockedMarkers());
+}
+
+function sqlUnavailableReasonFor(record) {
+  if (isFileResponse(record.entry)) {
+    return "图片或文件类响应不支持获取 SQL。";
+  }
+  if (isExplainRequest(record.entry.request?.url)) {
+    return "当前请求已包含 isExplain=true，不能再次获取 SQL。";
+  }
+  const blockedMarker = sqlBlockedMarkerFor(record);
+  return blockedMarker ? `当前接口包含禁止标识“${blockedMarker}”，已禁止获取 SQL。` : "";
+}
+
 function updateEncryptionSettings() {
   const config = getEncryptionMethod(settingsMethod.value);
   const requiresKey = config.keyLengths.length > 0;
   settingsKey.disabled = !requiresKey;
   settingsKey.required = requiresKey;
   settingsHint.textContent = requiresKey
-    ? `${config.label}：密钥和主题只保存在此扩展的本地配置中。密钥 UTF-8 长度需为 ${config.keyLengths.join("、")} 字节。`
-    : "Base64 不需要密钥。主题和解密方式只保存在此扩展的本地配置中。";
+    ? `${config.label}：密钥、主题和 SQL 禁止标识只保存在此扩展的本地配置中。密钥 UTF-8 长度需为 ${config.keyLengths.join("、")} 字节。`
+    : "Base64 不需要密钥。主题、解密方式和 SQL 禁止标识只保存在此扩展的本地配置中。";
 }
 
 function configuredTheme() {
@@ -102,22 +148,41 @@ function responseEncryption(entry) {
   return responseHeader(entry, "x-data-encrypted").trim().toUpperCase();
 }
 
-function isApiRequest(entry) {
+function requestResourceType(entry) {
   const type = String(entry._resourceType || entry.type || "").toLowerCase();
-  if (type === "xhr" || type === "fetch") return true;
-  if (["document", "stylesheet", "script", "image", "font", "media", "websocket", "ping", "preflight"].includes(type)) {
-    return false;
+  if (type === "xhr" || type === "fetch") return "fetch-xhr";
+  if (["document", "stylesheet", "script", "font", "image", "media", "manifest", "websocket", "wasm"].includes(type)) {
+    return type;
   }
-  const method = String(entry.request?.method || "GET").toUpperCase();
-  const accept = entry.request?.headers?.find((item) => (item.name || "").toLowerCase() === "accept")?.value || "";
-  return method !== "GET" || /json|graphql/.test(responseMimeType(entry)) || /json|graphql/i.test(accept);
+  return "other";
 }
 
-function createRecord(entry) {
+function requestMatchesFilter(entry) {
+  return requestFilter === "all" || requestResourceType(entry) === requestFilter;
+}
+
+function requestIdentity(entry) {
+  const requestId = entry._requestId || entry.requestId;
+  if (requestId) return `id:${requestId}`;
+
+  const request = entry.request || {};
+  return [
+    entry.startedDateTime || "",
+    request.method || "GET",
+    request.url || "",
+    entry.time ?? "",
+    entry.response?.status ?? "",
+  ].join("\u0001");
+}
+
+function createRecord(entry, identity = requestIdentity(entry)) {
   const record = {
     id: nextId++,
+    identity,
     entry,
     bodyText: null,
+    bodyBase64: null,
+    bodyEncoding: "",
     bodyError: "",
     bodyReady: false,
     decoded: null,
@@ -139,13 +204,28 @@ function invalidateDecodedRecords() {
   for (const record of records) record.decoded = null;
 }
 
-function decodeContent(content, encoding) {
-  if (typeof content !== "string") return "";
-  if (encoding !== "base64") return content;
-
+function decodeBase64Text(content) {
   const binary = atob(content);
   const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
   return new TextDecoder().decode(bytes);
+}
+
+function isTextMimeType(mimeType) {
+  return /^(text\/|application\/(json|javascript|xml|graphql|x-www-form-urlencoded)|image\/svg\+xml)/i.test(mimeType);
+}
+
+function isBinaryResponse(record) {
+  return record.bodyEncoding === "base64" && !isTextMimeType(responseMimeType(record.entry));
+}
+
+function isFileResponse(entry) {
+  const resourceType = requestResourceType(entry);
+  if (["image", "media", "font", "wasm"].includes(resourceType)) return true;
+  if (/\battachment\b/i.test(responseHeader(entry, "content-disposition"))) return true;
+
+  const mimeType = responseMimeType(entry);
+  return /^(image|audio|video|font)\//.test(mimeType)
+    || /^(text\/(csv|tab-separated-values)|application\/(octet-stream|pdf|zip|gzip|x-7z-compressed|x-rar-compressed|msword|vnd\.))/.test(mimeType);
 }
 
 function setResponseContent(record, content, encoding) {
@@ -155,12 +235,18 @@ function setResponseContent(record, content, encoding) {
   }
 
   try {
-    record.bodyText = decodeContent(content, encoding);
+    record.bodyEncoding = encoding === "base64" ? "base64" : "";
+    record.bodyBase64 = record.bodyEncoding ? content : null;
+    record.bodyText = record.bodyEncoding && isTextMimeType(responseMimeType(record.entry))
+      ? decodeBase64Text(content)
+      : record.bodyEncoding ? null : content;
     record.bodyReady = true;
     record.bodyError = "";
     record.decoded = null;
   } catch {
     record.bodyText = "";
+    record.bodyBase64 = null;
+    record.bodyEncoding = "";
     record.bodyReady = true;
     record.bodyError = "响应内容不是可显示的文本。";
   }
@@ -170,6 +256,8 @@ function setResponseContent(record, content, encoding) {
 
 function setBodyError(record, message) {
   record.bodyText = "";
+  record.bodyBase64 = null;
+  record.bodyEncoding = "";
   record.bodyReady = true;
   record.bodyError = message;
   if (record.id === selectedId) renderDetails();
@@ -177,6 +265,11 @@ function setBodyError(record, message) {
 
 function loadLiveContent(record, request) {
   if (typeof request.getContent !== "function") {
+    const content = request.response?.content;
+    if (typeof content?.text === "string") {
+      setResponseContent(record, content.text, content.encoding);
+      return;
+    }
     setBodyError(record, "无法读取响应正文。");
     return;
   }
@@ -215,10 +308,16 @@ function renderList() {
   const query = searchInput.value.trim().toLowerCase();
   const filtered = records.filter((record) => {
     const request = record.entry.request;
-    return `${request.method || "GET"} ${request.url}`.toLowerCase().includes(query);
+    return requestMatchesFilter(record.entry)
+      && `${request.method || "GET"} ${request.url}`.toLowerCase().includes(query);
   });
 
-  requestCount.textContent = `${records.length} 个请求`;
+  const selectedRecord = records.find((record) => record.id === selectedId);
+  if (selectedRecord && !filtered.includes(selectedRecord)) selectedId = filtered[0]?.id ?? null;
+
+  requestCount.textContent = requestFilter === "all" && !query
+    ? `${records.length} 个请求`
+    : `${filtered.length} / ${records.length} 个请求`;
   requestList.replaceChildren();
 
   if (!filtered.length) {
@@ -250,6 +349,14 @@ function renderList() {
     name.textContent = requestName(request.url);
     name.title = request.url;
     row.append(icon, name);
+    if (tabularDataFor(record)) {
+      const tableBadge = document.createElement("span");
+      tableBadge.className = "request-table-badge";
+      tableBadge.textContent = "表";
+      tableBadge.title = "可生成表格";
+      tableBadge.setAttribute("aria-label", "可生成表格");
+      row.append(tableBadge);
+    }
     requestList.append(row);
   }
 }
@@ -261,6 +368,7 @@ function applySidebarWidth(width) {
   const minWidth = Math.min(180, maxWidth);
   const nextWidth = Math.min(maxWidth, Math.max(minWidth, width));
   workspace.style.setProperty("--sidebar-width", `${Math.round(nextWidth)}px`);
+  topbar.style.setProperty("--sidebar-width", `${Math.round(nextWidth)}px`);
   resizeDivider.setAttribute("aria-valuemin", String(Math.round(minWidth)));
   resizeDivider.setAttribute("aria-valuemax", String(Math.round(maxWidth)));
   resizeDivider.setAttribute("aria-valuenow", String(Math.round(nextWidth)));
@@ -461,6 +569,18 @@ function setButtonLabel(button, icon, label) {
 function responseFor(record) {
   if (record.bodyError) return null;
   if (!record.bodyReady) return null;
+  if (isBinaryResponse(record)) {
+    const mimeType = responseMimeType(record.entry) || "application/octet-stream";
+    return {
+      value: null,
+      text: "",
+      isJson: false,
+      isBinary: true,
+      mimeType,
+      decrypted: false,
+      label: `二进制 · ${mimeType}`,
+    };
+  }
   if (rawMode) {
     const text = record.bodyText || "";
     try {
@@ -474,6 +594,73 @@ function responseFor(record) {
     encryption: responseEncryption(record.entry),
   });
   return record.decoded;
+}
+
+function searchableResponseText(record) {
+  const decoded = responseFor(record);
+  if (!decoded) return "";
+  if (decoded.isBinary) return "";
+  return decoded.isJson ? JSON.stringify(decoded.value, null, 2) : decoded.text;
+}
+
+function globalSearchSnippet(text, term) {
+  const index = text.toLocaleLowerCase().indexOf(term.toLocaleLowerCase());
+  if (index < 0) return text.slice(0, 180);
+  const start = Math.max(0, index - 70);
+  const end = Math.min(text.length, index + term.length + 110);
+  return `${start ? "…" : ""}${text.slice(start, end)}${end < text.length ? "…" : ""}`;
+}
+
+function renderGlobalSearchResults() {
+  const term = globalSearchInput.value.trim();
+  globalSearchResults.replaceChildren();
+  if (!term) {
+    globalSearchStatus.textContent = "输入关键词搜索已捕获的接口响应。";
+    return;
+  }
+
+  const normalizedTerm = term.toLocaleLowerCase();
+  const matches = records.filter((record) => {
+    const request = record.entry.request || {};
+    const responseText = searchableResponseText(record);
+    return `${request.method || "GET"} ${request.url || ""}`.toLocaleLowerCase().includes(normalizedTerm)
+      || responseText.toLocaleLowerCase().includes(normalizedTerm);
+  });
+  globalSearchStatus.textContent = `${matches.length} 个接口匹配“${term}”`;
+  if (!matches.length) {
+    globalSearchResults.append(Object.assign(document.createElement("div"), {
+      className: "global-search-empty",
+      textContent: records.some((record) => !record.bodyReady)
+        ? "暂无匹配；部分响应仍在读取中。"
+        : "没有找到匹配的接口或返回内容。",
+    }));
+    return;
+  }
+
+  for (const record of matches) {
+    const request = record.entry.request || {};
+    const responseText = searchableResponseText(record);
+    const result = document.createElement("button");
+    result.type = "button";
+    result.className = "global-search-result";
+    result.dataset.id = String(record.id);
+    result.dataset.responseMatch = String(responseText.toLocaleLowerCase().includes(normalizedTerm));
+    const title = document.createElement("div");
+    title.className = "global-search-result-title";
+    const name = document.createElement("strong");
+    name.textContent = requestName(request.url || "未知接口");
+    const method = document.createElement("span");
+    method.textContent = request.method || "GET";
+    title.append(method, name);
+    const url = document.createElement("div");
+    url.className = "global-search-result-url";
+    url.textContent = request.url || "";
+    const snippet = document.createElement("div");
+    snippet.className = "global-search-result-snippet";
+    snippet.textContent = responseText ? globalSearchSnippet(responseText, term) : "响应正文仍在读取中。";
+    result.append(title, url, snippet);
+    globalSearchResults.append(result);
+  }
 }
 
 function renderResponseState(record) {
@@ -545,6 +732,157 @@ function renderPreviewValue(value, key, depth = 0) {
   return row;
 }
 
+function isTableRow(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function tableCandidateScore(rows, depth) {
+  const columns = new Set(rows.flatMap((row) => Object.keys(row)));
+  if (!columns.size) return -Infinity;
+
+  const populatedRows = rows.filter((row) => Object.keys(row).length > 0).length;
+  const averageColumns = rows.reduce((total, row) => total + Object.keys(row).length, 0) / rows.length;
+  return rows.length * 10 + columns.size * 2 + populatedRows + averageColumns - depth;
+}
+
+function findTabularData(value, path = "$", depth = 0, best = null) {
+  if (depth > 16 || value === null || typeof value !== "object") return best;
+
+  if (Array.isArray(value)) {
+    if (value.length > 0 && value.every(isTableRow)) {
+      const score = tableCandidateScore(value, depth);
+      if (Number.isFinite(score) && (!best || score > best.score)) best = { path, rows: value, score };
+    }
+    for (const [index, child] of value.entries()) {
+      const childPath = `${path}[${index}]`;
+      best = findTabularData(child, childPath, depth + 1, best);
+    }
+    return best;
+  }
+
+  for (const [key, child] of Object.entries(value)) {
+    const childPath = /^[A-Za-z_$][\w$]*$/.test(key) ? `${path}.${key}` : `${path}[${JSON.stringify(key)}]`;
+    best = findTabularData(child, childPath, depth + 1, best);
+  }
+  return best;
+}
+
+function tabularDataFor(record) {
+  const decoded = responseFor(record);
+  return decoded?.isJson ? findTabularData(decoded.value) : null;
+}
+
+function formatTableCell(value) {
+  if (value === undefined) return "—";
+  if (value === null) return "null";
+  if (typeof value === "object") {
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return String(value);
+    }
+  }
+  return String(value);
+}
+
+function renderTableTab(record) {
+  const tableData = tabularDataFor(record);
+  if (!tableData) {
+    detailContent.append(createNote("此接口没有可展示为表格的字典列表"));
+    return;
+  }
+
+  const columns = [];
+  const columnSet = new Set();
+  for (const row of tableData.rows) {
+    for (const key of Object.keys(row)) {
+      if (!columnSet.has(key)) {
+        columnSet.add(key);
+        columns.push(key);
+      }
+    }
+  }
+
+  const summary = document.createElement("div");
+  summary.className = "table-summary";
+  summary.textContent = `${tableData.path} · ${tableData.rows.length} 条`;
+  detailContent.append(summary);
+
+  if (!columns.length) {
+    detailContent.append(createNote("列表中的对象没有可展示字段"));
+    return;
+  }
+
+  const table = document.createElement("table");
+  table.className = "data-table";
+  const thead = document.createElement("thead");
+  const headerRow = document.createElement("tr");
+  const indexHeader = document.createElement("th");
+  indexHeader.className = "table-index";
+  indexHeader.scope = "col";
+  indexHeader.textContent = "序号";
+  headerRow.append(indexHeader);
+  for (const column of columns) {
+    const cell = document.createElement("th");
+    cell.scope = "col";
+    cell.textContent = column;
+    headerRow.append(cell);
+  }
+  thead.append(headerRow);
+
+  const tbody = document.createElement("tbody");
+  for (const [index, row] of tableData.rows.entries()) {
+    const tableRow = document.createElement("tr");
+    const indexCell = document.createElement("td");
+    indexCell.className = "table-index";
+    indexCell.textContent = String(index + 1);
+    tableRow.append(indexCell);
+    for (const column of columns) {
+      const cell = document.createElement("td");
+      cell.textContent = formatTableCell(row[column]);
+      tableRow.append(cell);
+    }
+    tbody.append(tableRow);
+  }
+
+  table.append(thead, tbody);
+  detailContent.append(table);
+  const matchCount = highlightResponseMatches(table, responseSearchTerm);
+  responseSearchCount.textContent = responseSearchTerm.trim() ? `${matchCount} 个匹配` : "";
+}
+
+function renderBinaryPreview(record, decoded) {
+  const source = `data:${decoded.mimeType};base64,${record.bodyBase64}`;
+  const container = document.createElement("div");
+  container.className = "binary-preview";
+
+  if (decoded.mimeType.startsWith("image/")) {
+    const image = document.createElement("img");
+    image.src = source;
+    image.alt = `${decoded.mimeType} 响应预览`;
+    container.append(image);
+  } else if (decoded.mimeType.startsWith("audio/")) {
+    const audio = document.createElement("audio");
+    audio.controls = true;
+    audio.src = source;
+    container.append(audio);
+  } else if (decoded.mimeType.startsWith("video/")) {
+    const video = document.createElement("video");
+    video.controls = true;
+    video.src = source;
+    container.append(video);
+  } else if (decoded.mimeType === "application/pdf") {
+    const frame = document.createElement("iframe");
+    frame.title = "PDF 响应预览";
+    frame.src = source;
+    container.append(frame);
+  } else {
+    container.append(createNote(`${decoded.mimeType} 是二进制响应，Chrome 在 Preview 中提供文件预览。`));
+  }
+
+  return container;
+}
+
 function renderBodyTab(record, tab) {
   if (record.bodyError) {
     detailContent.append(createNote(record.bodyError));
@@ -554,12 +892,17 @@ function renderBodyTab(record, tab) {
     detailContent.append(createNote("正在读取响应正文…"));
     return;
   }
+  const decoded = responseFor(record);
+  if (decoded?.isBinary) {
+    if (tab === "preview") detailContent.append(renderBinaryPreview(record, decoded));
+    else detailContent.append(createNote(`${decoded.mimeType} 是二进制响应，Response 仅适用于文本内容。`));
+    return;
+  }
   if (!record.bodyText) {
     detailContent.append(createNote("此接口没有响应正文"));
     return;
   }
 
-  const decoded = responseFor(record);
   if (tab === "preview") {
     if (!decoded.isJson) {
       const codeView = createCodeView(decoded.text);
@@ -612,10 +955,33 @@ function createSqlView(sql) {
   return view;
 }
 
-function requestExplainSql(record) {
-  const request = record.entry.request;
-  const url = new URL(request.url);
+function explainRequestUrl(requestUrl) {
+  const url = new URL(requestUrl);
   url.searchParams.set("isExplain", "true");
+  return url.href;
+}
+
+function confirmSqlReplay(record) {
+  const request = record.entry.request;
+  const method = String(request.method || "GET").toUpperCase();
+  sqlConfirmSummary.textContent = `当前请求是 ${method}。获取 SQL 会在当前页面登录态中重新发送原请求，并追加 isExplain=true。`;
+  sqlConfirmUrl.textContent = explainRequestUrl(request.url);
+  sqlConfirmDialog.returnValue = "cancel";
+  return new Promise((resolve) => {
+    sqlConfirmDialog.addEventListener(
+      "close",
+      () => resolve(sqlConfirmDialog.returnValue === "confirm"),
+      { once: true },
+    );
+    sqlConfirmDialog.showModal();
+  });
+}
+
+function requestExplainSql(record) {
+  const unavailableReason = sqlUnavailableReasonFor(record);
+  if (unavailableReason) throw new Error(unavailableReason);
+
+  const request = record.entry.request;
 
   const method = String(request.method || "GET").toUpperCase();
   const postData = request.postData;
@@ -630,7 +996,7 @@ function requestExplainSql(record) {
   const headers = (request.headers || []).filter(({ name }) => name && !excludedHeaders.test(name))
     .map(({ name, value }) => [name, value]);
   const config = {
-    url: url.href,
+    url: explainRequestUrl(request.url),
     method,
     headers,
     body: ["GET", "HEAD"].includes(method) ? null : (postData?.text ?? null),
@@ -669,6 +1035,7 @@ function requestExplainSql(record) {
 }
 
 function renderSqlTab(record) {
+  const unavailableReason = sqlUnavailableReasonFor(record);
   const toolbar = document.createElement("div");
   toolbar.className = "sql-toolbar";
   const actions = document.createElement("div");
@@ -677,8 +1044,12 @@ function renderSqlTab(record) {
   fetchButton.type = "button";
   fetchButton.className = "sql-copy-button";
   setButtonLabel(fetchButton, "↗", record.sqlLoading ? "获取中…" : "获取 SQL");
-  fetchButton.disabled = record.sqlLoading;
+  fetchButton.disabled = record.sqlLoading || Boolean(unavailableReason);
+  if (unavailableReason) fetchButton.title = unavailableReason;
   fetchButton.addEventListener("click", async () => {
+    if (unavailableReason) return;
+    if (!await confirmSqlReplay(record)) return;
+
     record.sqlLoading = true;
     record.sqlError = "";
     renderDetails();
@@ -711,9 +1082,11 @@ function renderSqlTab(record) {
     window.setTimeout(() => { setButtonLabel(copyButton, "⧉", "复制 SQL"); }, 1200);
   });
   actions.append(fetchButton, copyButton);
-  const state = createNote(record.sqlLoading
-    ? "正在获取 SQL…"
-    : record.sqlError || (record.sqlText ? "" : "点击“获取 SQL”后，将使用当前请求参数和浏览器登录态请求解释接口。"));
+  const state = createNote(unavailableReason
+    ? unavailableReason
+    : record.sqlLoading
+      ? "正在获取 SQL…"
+      : record.sqlError || (record.sqlText ? "" : "点击“获取 SQL”后，将使用当前请求参数和浏览器登录态请求解释接口。"));
   state.classList.add("sql-state");
   toolbar.append(actions, state);
   detailContent.append(toolbar);
@@ -724,6 +1097,7 @@ function renderSqlTab(record) {
 function renderDetails() {
   const record = records.find((item) => item.id === selectedId);
   if (!record) {
+    tableTabButton.hidden = true;
     detailsEmpty.hidden = false;
     detailsView.hidden = true;
     return;
@@ -731,8 +1105,13 @@ function renderDetails() {
 
   detailsEmpty.hidden = true;
   detailsView.hidden = false;
-  const searchableBodyTab = activeTab === "response" || activeTab === "preview";
-  const searchLabel = activeTab === "preview" ? "Preview" : "Response";
+  const tableAvailable = Boolean(tabularDataFor(record));
+  sqlTabButton.hidden = isFileResponse(record.entry);
+  if (activeTab === "sql" && sqlTabButton.hidden) activeTab = "headers";
+  tableTabButton.hidden = !tableAvailable;
+  if (!tableAvailable && activeTab === "table") activeTab = "preview";
+  const searchableBodyTab = activeTab === "response" || activeTab === "preview" || activeTab === "table";
+  const searchLabel = activeTab === "preview" ? "Preview" : activeTab === "table" ? "表格" : "Response";
   responseSearch.hidden = !searchableBodyTab;
   responseSearchInput.value = searchableBodyTab ? responseSearchTerm : "";
   responseSearchInput.placeholder = `搜索 ${searchLabel}`;
@@ -752,6 +1131,7 @@ function renderDetails() {
   detailContent.replaceChildren();
   if (activeTab === "headers") renderHeaders(record);
   else if (activeTab === "payload") renderPayload(record);
+  else if (activeTab === "table") renderTableTab(record);
   else if (activeTab === "sql") renderSqlTab(record);
   else renderBodyTab(record, activeTab);
 
@@ -771,6 +1151,48 @@ requestList.addEventListener("click", (event) => {
 });
 
 searchInput.addEventListener("input", renderList);
+globalSearchButton.addEventListener("click", () => {
+  globalSearchInput.value = "";
+  globalSearchResults.replaceChildren();
+  globalSearchStatus.textContent = "输入关键词后点击搜索图标，搜索已捕获的接口响应。";
+  globalSearchDialog.showModal();
+  globalSearchInput.focus();
+});
+globalSearchSubmit.addEventListener("click", renderGlobalSearchResults);
+globalSearchInput.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter") return;
+  event.preventDefault();
+  renderGlobalSearchResults();
+});
+globalSearchResults.addEventListener("click", (event) => {
+  const result = event.target.closest("[data-id]");
+  if (!result) return;
+  selectedId = Number(result.dataset.id);
+  activeTab = "response";
+  responseSearchTerm = result.dataset.responseMatch === "true" ? globalSearchInput.value.trim() : "";
+  globalSearchDialog.close();
+  renderList();
+  renderDetails();
+});
+reloadPageButton.addEventListener("click", () => {
+  clearRecords();
+  try {
+    chrome.devtools.inspectedWindow.reload({ ignoreCache: true });
+  } catch {
+    // Keep the panel usable in test harnesses without the DevTools API.
+  }
+});
+for (const button of requestFilterButtons) {
+  button.addEventListener("click", () => {
+    requestFilter = button.dataset.requestFilter || "fetch-xhr";
+    for (const filterButton of requestFilterButtons) {
+      const active = filterButton === button;
+      filterButton.classList.toggle("active", active);
+      filterButton.setAttribute("aria-pressed", String(active));
+    }
+    renderList();
+  });
+}
 clearRequestsButton.addEventListener("click", clearRecords);
 
 detailTabs.addEventListener("click", (event) => {
@@ -832,6 +1254,7 @@ openSettingsButton.addEventListener("click", () => {
   settingsMethod.value = configuredEncryptionMethod();
   settingsKey.value = configuredAesKey();
   themeSelect.value = configuredTheme();
+  settingsSqlBlockedMarkers.value = configuredSqlBlockedMarkers().join("\n");
   updateEncryptionSettings();
   settingsError.hidden = true;
   settingsDialog.showModal();
@@ -847,14 +1270,16 @@ resetDefaultKeyButton.addEventListener("click", () => {
   try {
     localStorage.removeItem(AES_KEY_STORAGE_KEY);
     localStorage.removeItem(ENCRYPTION_METHOD_STORAGE_KEY);
+    localStorage.removeItem(SQL_BLOCKED_MARKERS_STORAGE_KEY);
   } catch {
-    settingsError.textContent = "无法恢复默认密钥，请检查浏览器的扩展存储设置。";
+    settingsError.textContent = "无法恢复默认设置，请检查浏览器的扩展存储设置。";
     settingsError.hidden = false;
     return;
   }
 
   settingsMethod.value = DEFAULT_ENCRYPTION_METHOD;
   settingsKey.value = DEFAULT_AES_KEY;
+  settingsSqlBlockedMarkers.value = DEFAULT_SQL_BLOCKED_MARKERS.join("\n");
   updateEncryptionSettings();
   invalidateDecodedRecords();
   settingsDialog.close();
@@ -876,8 +1301,12 @@ settingsForm.addEventListener("submit", (event) => {
     localStorage.setItem(AES_KEY_STORAGE_KEY, key);
     localStorage.setItem(ENCRYPTION_METHOD_STORAGE_KEY, method);
     localStorage.setItem(THEME_STORAGE_KEY, themeSelect.value);
+    localStorage.setItem(
+      SQL_BLOCKED_MARKERS_STORAGE_KEY,
+      parseSqlBlockedMarkers(settingsSqlBlockedMarkers.value).join("\n"),
+    );
   } catch {
-    settingsError.textContent = "无法保存密钥，请检查浏览器的扩展存储设置。";
+    settingsError.textContent = "无法保存设置，请检查浏览器的扩展存储设置。";
     settingsError.hidden = false;
     return;
   }
@@ -888,15 +1317,41 @@ settingsForm.addEventListener("submit", (event) => {
   renderDetails();
 });
 
-function addRequest(entry) {
-  if (!isApiRequest(entry)) return;
-  const record = createRecord(entry);
+function addRequest(entry, options = {}) {
+  const identity = requestIdentity(entry);
+  if (records.some((record) => record.identity === identity)) return;
+  const record = createRecord(entry, identity);
   loadLiveContent(record, entry);
-  renderList();
-  renderDetails();
+  if (options.render !== false) {
+    renderList();
+    renderDetails();
+  }
 }
 
 chrome.devtools.network.onRequestFinished.addListener(addRequest);
 chrome.devtools.network.onNavigated.addListener(clearRecords);
 
+function loadExistingRequests() {
+  if (typeof chrome.devtools.network.getHAR !== "function") return;
+
+  let handled = false;
+  const handleHar = (harLog) => {
+    if (handled) return;
+    handled = true;
+    for (const entry of harLog?.entries || []) addRequest(entry, { render: false });
+    if (records.length && selectedId === null) selectedId = records[0].id;
+    renderList();
+    renderDetails();
+  };
+
+  try {
+    const result = chrome.devtools.network.getHAR(handleHar);
+    result?.catch?.(() => {});
+    result?.then?.(handleHar);
+  } catch {
+    // Live request capture remains available when HAR retrieval is unsupported.
+  }
+}
+
 renderList();
+loadExistingRequests();

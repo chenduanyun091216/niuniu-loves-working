@@ -8,22 +8,43 @@
 </head>
 <body>
   <header class="topbar">
-    <div class="brand">
-      <img src="icon.png" alt="">
-      <div>
-        <h1>牛牛爱上班</h1>
-        <span>接口调试</span>
+    <div class="topbar-left">
+      <div class="brand">
+        <img src="icon.png" alt="">
+        <div>
+          <h1>牛牛爱上班</h1>
+          <span>接口调试</span>
+        </div>
       </div>
+      <button id="global-search" class="icon-button topbar-action" type="button" title="搜索全部接口响应" aria-label="搜索全部接口响应"><svg class="topbar-action-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><circle cx="7" cy="7" r="4.2"></circle><path d="m10.2 10.2 3.1 3.1"></path></svg></button>
+      <button id="reload-page" class="icon-button topbar-action" type="button" title="刷新页面" aria-label="刷新页面"><svg class="topbar-action-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M13.2 5.2V2.4m0 0h-2.8m2.8 0-2 2.1A5.2 5.2 0 1 0 13 9.3"></path></svg></button>
     </div>
-    <div class="topbar-meta">
-      <span id="request-count">0 个请求</span>
-      <label class="raw-toggle" title="显示未经解密或解码的请求和响应">
-        <input id="raw-mode-toggle" type="checkbox" role="switch" aria-label="原始内容">
-        <span class="raw-toggle-track" aria-hidden="true"></span>
-        <span>原始内容</span>
-      </label>
-      <button id="open-settings" class="icon-button settings-button" type="button" title="解密设置" aria-label="解密设置">⚙</button>
-      <span class="author">作者 Mr.Chen</span>
+    <div class="topbar-divider" aria-hidden="true"></div>
+    <div class="topbar-right">
+      <div class="request-filters" role="toolbar" aria-label="按接口类型筛选">
+        <button type="button" data-request-filter="all" aria-pressed="false">All</button>
+        <button type="button" data-request-filter="fetch-xhr" aria-pressed="true" class="active">Fetch/XHR</button>
+        <button type="button" data-request-filter="document" aria-pressed="false">Doc</button>
+        <button type="button" data-request-filter="stylesheet" aria-pressed="false">CSS</button>
+        <button type="button" data-request-filter="script" aria-pressed="false">JS</button>
+        <button type="button" data-request-filter="font" aria-pressed="false">Font</button>
+        <button type="button" data-request-filter="image" aria-pressed="false">Img</button>
+        <button type="button" data-request-filter="media" aria-pressed="false">Media</button>
+        <button type="button" data-request-filter="manifest" aria-pressed="false">Manifest</button>
+        <button type="button" data-request-filter="websocket" aria-pressed="false">Socket</button>
+        <button type="button" data-request-filter="wasm" aria-pressed="false">Wasm</button>
+        <button type="button" data-request-filter="other" aria-pressed="false">Other</button>
+      </div>
+      <div class="topbar-meta">
+        <span id="request-count">0 个请求</span>
+        <label class="raw-toggle" title="显示未经解密或解码的请求和响应">
+          <input id="raw-mode-toggle" type="checkbox" role="switch" aria-label="原始内容">
+          <span class="raw-toggle-track" aria-hidden="true"></span>
+          <span>原始内容</span>
+        </label>
+        <button id="open-settings" class="icon-button settings-button" type="button" title="设置" aria-label="设置">⚙</button>
+        <span class="author">作者 Mr.Chen</span>
+      </div>
     </div>
   </header>
 
@@ -66,6 +87,7 @@
           <button type="button" data-tab="payload"><svg class="tab-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M8 2.5v7"></path><path d="m5.2 6.8 2.8 2.8 2.8-2.8"></path><path d="M3.5 11.5v1.2A1.3 1.3 0 0 0 4.8 14h6.4a1.3 1.3 0 0 0 1.3-1.3v-1.2"></path></svg><span>Payload</span></button>
           <button type="button" data-tab="preview"><svg class="tab-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M1.8 8s2.1-3.7 6.2-3.7S14.2 8 14.2 8s-2.1 3.7-6.2 3.7S1.8 8 1.8 8Z"></path><circle cx="8" cy="8" r="1.6"></circle></svg><span>Preview</span></button>
           <button type="button" data-tab="response"><svg class="tab-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M4 1.8h5l3 3v9.4H4z"></path><path d="M9 1.8v3h3M6 8h4M6 10.5h4"></path></svg><span>Response</span></button>
+          <button id="table-tab" type="button" data-tab="table" hidden><svg class="tab-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2.5 2.5h11v11h-11z"></path><path d="M2.5 6.3h11M2.5 9.7h11M6.2 2.5v11M9.8 2.5v11"></path></svg><span>表格</span></button>
           <button type="button" data-tab="sql"><svg class="tab-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><ellipse cx="8" cy="3.2" rx="4.7" ry="1.7"></ellipse><path d="M3.3 3.2v4.6c0 1 2.1 1.7 4.7 1.7s4.7-.7 4.7-1.7V3.2M3.3 7.8v4.6c0 1 2.1 1.7 4.7 1.7s4.7-.7 4.7-1.7V7.8"></path></svg><span>获取SQL</span></button>
         </nav>
         <div id="detail-content" class="detail-content"></div>
@@ -81,7 +103,7 @@
 
   <dialog id="settings-dialog" class="settings-dialog" aria-labelledby="settings-title">
     <form id="settings-form">
-      <h2 id="settings-title">解密设置</h2>
+      <h2 id="settings-title">设置</h2>
       <label class="settings-field" for="encryption-method">
         <span>解密方式</span>
         <select id="encryption-method">
@@ -102,7 +124,12 @@
           <option value="dark">暗色主题</option>
         </select>
       </label>
-      <p class="settings-hint">解密方式、密钥和主题只保存在此扩展的本地配置中。</p>
+      <label class="settings-field" for="sql-blocked-markers">
+        <span>禁止获取 SQL 的接口标识</span>
+        <textarea id="sql-blocked-markers" rows="3" spellcheck="false" placeholder="每行一个标识"></textarea>
+        <small class="settings-field-hint">支持空格、逗号或换行分隔；接口 URL 包含任一标识时将禁用“获取 SQL”。</small>
+      </label>
+      <p class="settings-hint">解密方式、密钥、主题和 SQL 禁止标识只保存在此扩展的本地配置中。</p>
       <p id="settings-error" class="settings-error" role="alert" hidden></p>
       <div class="settings-actions">
         <button id="reset-default-key" class="secondary-button" type="button">恢复默认</button>
@@ -110,6 +137,39 @@
         <button id="cancel-settings" class="secondary-button" type="button">取消</button>
         <button class="primary-button" type="submit">保存</button>
       </div>
+    </form>
+  </dialog>
+
+  <dialog id="sql-confirm-dialog" class="sql-confirm-dialog" aria-labelledby="sql-confirm-title" aria-describedby="sql-confirm-summary sql-confirm-danger">
+    <form method="dialog">
+      <h2 id="sql-confirm-title">确认获取 SQL</h2>
+      <p id="sql-confirm-summary" class="sql-confirm-summary"></p>
+      <div class="sql-confirm-target">
+        <span>将发送的解释接口</span>
+        <code id="sql-confirm-url"></code>
+      </div>
+      <p id="sql-confirm-danger" class="sql-confirm-danger">请勿对写操作的接口执行该操作。仅在确认该接口为查询接口时继续。</p>
+      <div class="settings-actions sql-confirm-actions">
+        <span class="settings-spacer"></span>
+        <button class="secondary-button" type="submit" value="cancel">取消</button>
+        <button class="danger-button" type="submit" value="confirm">确认并获取</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="global-search-dialog" class="global-search-dialog" aria-labelledby="global-search-title">
+    <form method="dialog" class="global-search-form">
+      <div class="global-search-heading">
+        <h2 id="global-search-title">搜索全部接口响应</h2>
+        <button class="dialog-close" type="submit" value="cancel" aria-label="关闭搜索">×</button>
+      </div>
+      <label class="global-search-input">
+        <span aria-hidden="true">⌕</span>
+        <input id="global-search-input" type="search" autocomplete="off" placeholder="搜索返回内容或接口地址" aria-label="搜索返回内容或接口地址">
+        <button id="global-search-submit" type="button" title="搜索" aria-label="搜索"><svg class="global-search-submit-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><circle cx="7" cy="7" r="4.2"></circle><path d="m10.2 10.2 3.1 3.1"></path></svg></button>
+      </label>
+      <p id="global-search-status" class="global-search-status">输入关键词搜索已捕获的接口响应。</p>
+      <div id="global-search-results" class="global-search-results" role="listbox" aria-label="全局搜索结果"></div>
     </form>
   </dialog>
 

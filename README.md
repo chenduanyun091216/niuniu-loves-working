@@ -6,21 +6,23 @@ Chrome Manifest V3 扩展，用于查看当前网页的接口请求，并在本�
 
 1. 打开 Chrome 的扩展管理页，启用「开发者模式」，选择「加载已解压的扩展程序」，并选择项目中的 `extension/` 目录。
 2. 打开需要调试的网页，再打开开发者工具。
-3. 选择开发者工具顶部的「牛牛爱上班」面板，然后刷新网页以捕获完整请求。
+3. 选择开发者工具顶部的「牛牛爱上班」面板。面板打开时会先载入当前 Network 中已有的接口请求，之后继续跟随浏览器捕获新请求。
 
 工具栏图标会显示使用提示。面板通过 Chrome DevTools Network API 读取当前检查页面的请求，不申请站点访问权限。解密在浏览器本地执行。
 
-Payload 面板会尝试解密 Query、Form Data 和 JSON 请求体中的密文或 Base64 文本；Response 会递归处理 JSON 对象和数组中的字段，也支持整段密文响应。面板「解密设置」支持 AES（ECB/PKCS7，默认）、DES（ECB/PKCS7）、3DES（ECB/PKCS7）和 Base64 解码；默认方式和默认密钥仍来自 `crypto.js`，自定义配置只保存在扩展本地。`Preview` 显示结构化内容，`Response` 显示格式化后的响应。
+Payload 面板会尝试解密 Query、Form Data 和 JSON 请求体中的密文或 Base64 文本；Response 会递归处理 JSON 对象和数组中的字段，也支持整段密文响应。面板「解密设置」支持 AES（ECB/PKCS7，默认）、DES（ECB/PKCS7）、3DES（ECB/PKCS7）和 Base64 解码；默认方式和默认密钥仍来自 `crypto.js`，自定义配置只保存在扩展本地。`Preview` 显示结构化内容，图片、音视频和 PDF 等文件按类型预览，`Response` 显示格式化后的文本响应。
 
 工具栏的「原始内容」开关可在原始请求/响应与解密或解码后的请求/响应之间切换。
 
 接口列表使用 Chrome Network 风格的名称和类型图标；可拖动列表与详情之间的分隔线调整宽度。Payload 和 Response 中的 JSON 会格式化并进行语法着色，原始模式仍保留密文和 Base64 字段值。
 
+当解码后的 JSON 中包含适合展示的对象列表时，详情区域会自动显示「表格」页签，不依赖固定字段名；表格页签支持与 Response 一致的搜索、高亮和匹配计数。图片、音视频、字体、PDF、压缩包、Office 和附件下载等文件类响应不会显示「获取 SQL」。设置中可配置禁止获取 SQL 的接口标识，默认包含 `make_new`、`make_update`、`make_remove`；接口 URL 命中任一标识，或原请求已包含 `isExplain=true` 时，会直接禁用「获取 SQL」。其他接口点击「获取 SQL」后会显示实际追加 `isExplain=true` 的完整接口地址，并用红色文字提示不要对写操作接口执行重放。
+
 作者：Mr.Chen
 
 ## 本地测试站
 
-项目包含一个 FastAPI 测试网页，可同时验证未加密 JSON、整段 AES、部分字段 AES、Base64 请求/响应，以及请求 Header/Payload 的展示。
+项目包含一个 FastAPI 测试网页，可同时验证未加密 JSON、直接对象列表、PNG 二进制 Preview、整段 AES、部分字段 AES、Base64 请求/响应，以及请求 Header/Payload 的展示。
 
 首次安装测试站依赖时运行：
 

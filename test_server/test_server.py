@@ -2,7 +2,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import Body, FastAPI, Header, Query, Request
-from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse
+from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 
@@ -10,6 +10,10 @@ TEST_SITE = Path(__file__).resolve().parent / "test_site"
 ENCRYPTED_JSON = (
     "Rnexv/QSkD//fgajr9ZhRKbyhbHCFe9XfO0aeFwLpJ6u4WRMDkhINubWasu8/"
     "BdIJcjr+z/2IQmbDih30pdBTw=="
+)
+PNG_1X1 = (
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk"
+    "+A8AAQUBAScY42YAAAAASUVORK5CYII="
 )
 
 app = FastAPI(title="牛牛爱上班 API 测试站")
@@ -55,6 +59,21 @@ async def plain_response(
         "source": source,
         "data": [{"id": 1, "name": "未加密响应", "active": True}],
     }
+
+
+@app.get("/api/table")
+def table_response(source: str = Query(default="button")) -> list[dict[str, Any]]:
+    return [
+        {"id": 1, "name": "小明", "score": 98, "active": True, "source": source},
+        {"id": 2, "name": "小红", "score": 95, "active": False, "source": source},
+    ]
+
+
+@app.get("/api/image")
+def image_response() -> Response:
+    import base64
+
+    return Response(base64.b64decode(PNG_1X1), media_type="image/png")
 
 
 @app.get("/api/encrypted", response_class=PlainTextResponse)

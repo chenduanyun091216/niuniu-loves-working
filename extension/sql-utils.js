@@ -1,3 +1,21 @@
+export const DEFAULT_SQL_BLOCKED_MARKERS = Object.freeze([
+  "make_new",
+  "make_update",
+  "make_remove",
+]);
+
+export function parseSqlBlockedMarkers(value) {
+  return [...new Set(String(value || "")
+    .split(/[\s,，]+/)
+    .map((item) => item.trim().toLowerCase())
+    .filter(Boolean))];
+}
+
+export function findSqlBlockedMarker(url, markers) {
+  const normalizedUrl = String(url || "").toLowerCase();
+  return markers.find((marker) => normalizedUrl.includes(marker)) || "";
+}
+
 export function formatSql(sql) {
   return sql.replace(/\r\n?/g, "\n").trim();
 }

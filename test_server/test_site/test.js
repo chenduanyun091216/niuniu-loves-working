@@ -5,6 +5,8 @@ document.cookie = "niuniu_test_session=mock-session; SameSite=Lax; Path=/";
 
 const requests = {
   plain: () => fetch("/api/plain?source=button"),
+  table: () => fetch("/api/table?source=button"),
+  image: () => fetch("/api/image"),
   encrypted: () => fetch("/api/encrypted?source=button"),
   partial: () => fetch("/api/partial?source=button"),
   base64: () => fetch("/api/base64?filter=MT0x", {
@@ -59,6 +61,8 @@ async function runRequest(name) {
   const method = name === "echo" ? "POST" : "GET";
   const url = {
     plain: "/api/plain?source=button",
+    table: "/api/table?source=button",
+    image: "/api/image",
     encrypted: "/api/encrypted?source=button",
     partial: "/api/partial?source=button",
     base64: "/api/base64?filter=MT0x",
