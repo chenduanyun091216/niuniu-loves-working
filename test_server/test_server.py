@@ -62,7 +62,13 @@ async def plain_response(
 
 
 @app.get("/api/table")
-def table_response(source: str = Query(default="button")) -> list[dict[str, Any]]:
+async def table_response(
+    request: Request,
+    source: str = Query(default="button"),
+    is_explain: bool = Query(default=False, alias="isExplain"),
+) -> Any:
+    if is_explain:
+        return await mock_sql_explain(request)
     return [
         {"id": 1, "name": "小明", "score": 98, "active": True, "source": source},
         {"id": 2, "name": "小红", "score": 95, "active": False, "source": source},

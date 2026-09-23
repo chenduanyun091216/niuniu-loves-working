@@ -1,16 +1,18 @@
 * { box-sizing: border-box; }
 
-html, body { border-radius: 10px; overflow: hidden; }
+html, body { overflow: hidden; }
+html { border-radius: 15px; clip-path: inset(0 round 15px); }
 
 body {
   width: 320px;
   margin: 0;
+  border-radius: 15px;
   color: #202633;
   background: #f6f8fb;
   font: 13px/1.5 "Microsoft YaHei", "Segoe UI", -apple-system, BlinkMacSystemFont, sans-serif;
 }
 
-.popup-card { padding: 18px 20px 14px; border-radius: 10px; }
+.popup-card { padding: 18px 20px 14px; border-radius: 15px; }
 
 header { display: flex; align-items: center; gap: 12px; }
 header img { width: 42px; height: 42px; border-radius: 11px; }

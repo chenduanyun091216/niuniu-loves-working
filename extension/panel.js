@@ -1,10 +1,13 @@
-import { DEFAULT_AES_KEY, DEFAULT_ENCRYPTION_METHOD, getEncryptionMethod } from "./crypto.js";
+import { loadLiveContent, responseFor as decodeRecordResponse } from "./panel-response.js";
+import { configuredAesKey, configuredEncryptionMethod, configuredSqlBlockedMarkers, initializeSettings } from "./panel-settings.js";
+import { createCodeView, highlightResponseMatches, formatRawJson, addSection, addRows, createNote, setButtonLabel, renderPreviewValue, renderBinaryPreview, createSqlView } from "./panel-views.js";
+import { renderTableTab } from "./panel-table.js";
+import { explainRequestUrl, requestExplainSql } from "./sql-replay.js";
 import { decodeDataValue, decodeResponse } from "./response-utils.js";
 import {
   hasJsonResponse,
   isExplainRequest,
   isFileResponse,
-  isTextMimeType,
   requestIdentity,
   requestName,
   requestResourceType,
@@ -12,20 +15,14 @@ import {
   responseMimeType,
 } from "./network-utils.js";
 import {
-  DEFAULT_SQL_BLOCKED_MARKERS,
   extractSql,
   findSqlBlockedMarker,
-  parseSqlBlockedMarkers,
 } from "./sql-utils.js";
-import { findTabularData, formatTableCell } from "./table-utils.js";
+import { findTabularData } from "./table-utils.js";
 
 const requestList = document.getElementById("request-list");
 const requestCount = document.getElementById("request-count");
 const searchInput = document.getElementById("request-search");
-const topbar = document.querySelector(".topbar");
-const workspace = document.querySelector(".workspace");
-const requestSidebar = document.querySelector(".request-sidebar");
-const resizeDivider = document.getElementById("resize-divider");
 const detailsEmpty = document.getElementById("details-empty");
 const detailsView = document.getElementById("details-view");
 const detailContent = document.getElementById("detail-content");
@@ -37,8 +34,6 @@ const clearRequestsButton = document.getElementById("clear-requests");
 const requestFilterButtons = [...document.querySelectorAll("[data-request-filter]")];
 const globalSearchButton = document.getElementById("global-search");
 const reloadPageButton = document.getElementById("reload-page");
-const themeToggleButton = document.getElementById("toggle-theme");
-const openSettingsButton = document.getElementById("open-settings");
 const detailTabs = document.querySelector(".detail-tabs");
 const detailTabButtons = [...detailTabs.querySelectorAll("button")];
 const tableTabButton = document.getElementById("table-tab");
@@ -53,25 +48,8 @@ let selectedId = null;
 let activeTab = "headers";
 let responseSearchTerm = "";
 let nextId = 1;
+let captureGeneration = 0;
 let requestFilter = "fetch-xhr";
-const SQL_KEYWORDS = new Set("ADD ALL ALTER AND ANY AS ASC BETWEEN BY CASE CAST COLLATE COLUMN COMMIT CONSTRAINT CREATE CROSS CURRENT_DATE CURRENT_TIME CURRENT_TIMESTAMP DATABASE DEFAULT DELETE DESC DISTINCT DROP ELSE END EXCEPT EXISTS FALSE FETCH FIRST FOR FOREIGN FROM FULL GRANT GROUP HAVING IN INDEX INNER INSERT INTERSECT INTO IS JOIN KEY LEFT LIKE LIMIT NOT NULL OFFSET ON OR ORDER OUTER PRIMARY REFERENCES RETURNING RIGHT ROLLBACK ROW SELECT SET TABLE THEN TRUE UNION UNIQUE UPDATE USING VALUES WHEN WHERE WITH".split(" "));
-const AES_KEY_STORAGE_KEY = "niuniu-aes-key";
-const ENCRYPTION_METHOD_STORAGE_KEY = "niuniu-encryption-method";
-const THEME_STORAGE_KEY = "niuniu-theme";
-const SQL_BLOCKED_MARKERS_STORAGE_KEY = "niuniu-sql-blocked-markers";
-const PROFESSIONAL_LIST_MODE_STORAGE_KEY = "niuniu-professional-request-list";
-const PROFESSIONAL_SIDEBAR_WIDTH_STORAGE_KEY = "niuniu-professional-sidebar-width";
-const PROFESSIONAL_LIST_MODE_WIDTH_DELTA = 72;
-const settingsDialog = document.getElementById("settings-dialog");
-const settingsForm = document.getElementById("settings-form");
-const settingsMethod = document.getElementById("encryption-method");
-const settingsKey = document.getElementById("aes-key");
-const requestListModeToggle = document.getElementById("toggle-request-list-mode");
-const settingsSqlBlockedMarkers = document.getElementById("sql-blocked-markers");
-const settingsHint = document.querySelector(".settings-hint");
-const settingsError = document.getElementById("settings-error");
-const cancelSettingsButton = document.getElementById("cancel-settings");
-const resetDefaultKeyButton = document.getElementById("reset-default-key");
 const sqlConfirmDialog = document.getElementById("sql-confirm-dialog");
 const sqlConfirmSummary = document.getElementById("sql-confirm-summary");
 const sqlConfirmUrl = document.getElementById("sql-confirm-url");
@@ -81,36 +59,7 @@ const globalSearchSubmit = document.getElementById("global-search-submit");
 const globalSearchStatus = document.getElementById("global-search-status");
 const globalSearchResults = document.getElementById("global-search-results");
 const rawModeToggle = document.getElementById("raw-mode-toggle");
-const tableCellDialog = document.getElementById("table-cell-dialog");
-const tableCellValue = document.getElementById("table-cell-value");
 let rawMode = false;
-const JSON_TOKEN_PATTERN = /("(?:\\.|[^"\\])*"(?=\s*:))|("(?:\\.|[^"\\])*")|(-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?)|\b(true|false)\b|\b(null)\b|([{}\[\],:])|(\s+)|([\s\S])/gy;
-
-function configuredAesKey() {
-  try {
-    return localStorage.getItem(AES_KEY_STORAGE_KEY) || DEFAULT_AES_KEY;
-  } catch {
-    return DEFAULT_AES_KEY;
-  }
-}
-
-function configuredEncryptionMethod() {
-  try {
-    const savedMethod = localStorage.getItem(ENCRYPTION_METHOD_STORAGE_KEY);
-    return getEncryptionMethod(savedMethod || DEFAULT_ENCRYPTION_METHOD).value;
-  } catch {
-    return DEFAULT_ENCRYPTION_METHOD;
-  }
-}
-
-function configuredSqlBlockedMarkers() {
-  try {
-    const savedMarkers = localStorage.getItem(SQL_BLOCKED_MARKERS_STORAGE_KEY);
-    return savedMarkers === null ? [...DEFAULT_SQL_BLOCKED_MARKERS] : parseSqlBlockedMarkers(savedMarkers);
-  } catch {
-    return [...DEFAULT_SQL_BLOCKED_MARKERS];
-  }
-}
 
 function sqlBlockedMarkerFor(record) {
   return findSqlBlockedMarker(record.entry.request?.url, configuredSqlBlockedMarkers());
@@ -126,62 +75,6 @@ function sqlUnavailableReasonFor(record) {
   const blockedMarker = sqlBlockedMarkerFor(record);
   return blockedMarker ? `当前接口包含禁止标识“${blockedMarker}”，已禁止获取 SQL。` : "";
 }
-
-function updateEncryptionSettings() {
-  const config = getEncryptionMethod(settingsMethod.value);
-  const requiresKey = config.keyLengths.length > 0;
-  settingsKey.disabled = !requiresKey;
-  settingsKey.required = requiresKey;
-  settingsHint.textContent = requiresKey
-    ? `${config.label}：密钥和 SQL 禁止标识只保存在此扩展的本地配置中。密钥 UTF-8 长度需为 ${config.keyLengths.join("、")} 字节。`
-    : "Base64 不需要密钥。解密方式和 SQL 禁止标识只保存在此扩展的本地配置中。";
-}
-
-function configuredTheme() {
-  try {
-    const savedTheme = localStorage.getItem(THEME_STORAGE_KEY);
-    if (savedTheme === "light" || savedTheme === "dark") return savedTheme;
-  } catch {
-    // Fall back to the system theme when local storage is unavailable.
-  }
-  return window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light";
-}
-
-function configuredProfessionalListMode() {
-  try {
-    return localStorage.getItem(PROFESSIONAL_LIST_MODE_STORAGE_KEY) === "minimal" ? "minimal" : "detailed";
-  } catch {
-    return "detailed";
-  }
-}
-
-function isProfessionalLayout() {
-  return true;
-}
-
-function updateRequestListModeToggle() {
-  const minimal = document.documentElement.dataset.requestListMode === "minimal";
-  requestListModeToggle.textContent = minimal ? ">" : "<";
-  requestListModeToggle.title = minimal ? "展开 Method、Status、Time" : "收起 Method、Status、Time";
-  requestListModeToggle.setAttribute("aria-label", requestListModeToggle.title);
-}
-
-function updateThemeToggle() {
-  const dark = document.documentElement.dataset.theme === "dark";
-  themeToggleButton.title = dark ? "切换到亮色主题" : "切换到暗色主题";
-  themeToggleButton.setAttribute("aria-label", themeToggleButton.title);
-  themeToggleButton.setAttribute("aria-pressed", String(dark));
-}
-
-function applyTheme(theme) {
-  document.documentElement.dataset.theme = theme;
-  document.documentElement.dataset.density = "compact";
-  document.documentElement.dataset.requestListMode = configuredProfessionalListMode();
-  updateRequestListModeToggle();
-  updateThemeToggle();
-}
-
-applyTheme(configuredTheme());
 
 function responseEncryption(entry) {
   return responseHeader(entry, "x-data-encrypted").trim().toUpperCase();
@@ -210,7 +103,9 @@ function createRecord(entry, identity = requestIdentity(entry)) {
 }
 
 function clearRecords() {
+  captureGeneration += 1;
   records.length = 0;
+  globalSearchResults.replaceChildren();
   selectedId = null;
   renderList();
   renderDetails();
@@ -218,69 +113,6 @@ function clearRecords() {
 
 function invalidateDecodedRecords() {
   for (const record of records) record.decoded = null;
-}
-
-function decodeBase64Text(content) {
-  const binary = atob(content);
-  const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
-  return new TextDecoder().decode(bytes);
-}
-
-function isBinaryResponse(record) {
-  return record.bodyEncoding === "base64" && !isTextMimeType(responseMimeType(record.entry));
-}
-
-function setResponseContent(record, content, encoding) {
-  if (content && typeof content === "object") {
-    encoding = content.encoding || "";
-    content = content.content;
-  }
-
-  try {
-    record.bodyEncoding = encoding === "base64" ? "base64" : "";
-    record.bodyBase64 = record.bodyEncoding ? content : null;
-    record.bodyText = record.bodyEncoding && isTextMimeType(responseMimeType(record.entry))
-      ? decodeBase64Text(content)
-      : record.bodyEncoding ? null : content;
-    record.bodyReady = true;
-    record.bodyError = "";
-    record.decoded = null;
-  } catch {
-    record.bodyText = "";
-    record.bodyBase64 = null;
-    record.bodyEncoding = "";
-    record.bodyReady = true;
-    record.bodyError = "响应内容不是可显示的文本。";
-  }
-
-  if (record.id === selectedId) renderDetails();
-}
-
-function setBodyError(record, message) {
-  record.bodyText = "";
-  record.bodyBase64 = null;
-  record.bodyEncoding = "";
-  record.bodyReady = true;
-  record.bodyError = message;
-  if (record.id === selectedId) renderDetails();
-}
-
-function loadLiveContent(record, request) {
-  if (typeof request.getContent !== "function") {
-    const content = request.response?.content;
-    if (typeof content?.text === "string") {
-      setResponseContent(record, content.text, content.encoding);
-      return;
-    }
-    setBodyError(record, "无法读取响应正文。");
-    return;
-  }
-
-  try {
-    request.getContent((content, encoding) => setResponseContent(record, content, encoding));
-  } catch {
-    setBodyError(record, "无法读取响应正文。");
-  }
 }
 
 function renderList() {
@@ -292,7 +124,7 @@ function renderList() {
   });
 
   const selectedRecord = records.find((record) => record.id === selectedId);
-  if (selectedRecord && !filtered.includes(selectedRecord)) selectedId = filtered[0]?.id ?? null;
+  if (!selectedRecord || !filtered.includes(selectedRecord)) selectedId = filtered[0]?.id ?? null;
 
   requestCount.textContent = requestFilter === "all" && !query
     ? `${records.length} 个请求`
@@ -352,118 +184,6 @@ function renderList() {
   }
 }
 
-function applySidebarWidth(width) {
-  const workspaceWidth = workspace.getBoundingClientRect().width;
-  const dividerWidth = resizeDivider.getBoundingClientRect().width || 5;
-  const maxWidth = Math.max(0, workspaceWidth - 250 - dividerWidth);
-  const minWidth = Math.min(180, maxWidth);
-  const nextWidth = Math.min(maxWidth, Math.max(minWidth, width));
-  workspace.style.setProperty("--sidebar-width", `${Math.round(nextWidth)}px`);
-  topbar.style.setProperty("--sidebar-width", `${Math.round(nextWidth)}px`);
-  resizeDivider.setAttribute("aria-valuemin", String(Math.round(minWidth)));
-  resizeDivider.setAttribute("aria-valuemax", String(Math.round(maxWidth)));
-  resizeDivider.setAttribute("aria-valuenow", String(Math.round(nextWidth)));
-}
-
-function configuredProfessionalSidebarWidth() {
-  try {
-    const width = Number(localStorage.getItem(PROFESSIONAL_SIDEBAR_WIDTH_STORAGE_KEY));
-    return Number.isFinite(width) && width > 0 ? width : 0;
-  } catch {
-    return 0;
-  }
-}
-
-function saveProfessionalSidebarWidth() {
-  if (!isProfessionalLayout()) return;
-  try {
-    localStorage.setItem(PROFESSIONAL_SIDEBAR_WIDTH_STORAGE_KEY, String(Math.round(requestSidebar.getBoundingClientRect().width)));
-  } catch {
-    // The resized layout remains available for the current panel session.
-  }
-}
-
-function resizeSidebarForRequestListMode(previousMode, nextMode) {
-  if (!isProfessionalLayout() || previousMode === nextMode) return;
-  const direction = nextMode === "minimal" ? -1 : 1;
-  applySidebarWidth(requestSidebar.getBoundingClientRect().width + direction * PROFESSIONAL_LIST_MODE_WIDTH_DELTA);
-  saveProfessionalSidebarWidth();
-}
-
-function applyThemeLayout() {
-  renderList();
-  renderDetails();
-}
-
-function createCodeView(text, isJson = false) {
-  const pre = document.createElement("pre");
-  pre.className = "code-view";
-  if (!isJson) {
-    pre.textContent = text;
-    return pre;
-  }
-
-  JSON_TOKEN_PATTERN.lastIndex = 0;
-  for (const match of text.matchAll(JSON_TOKEN_PATTERN)) {
-    const tokenClass = match[1] ? "json-key"
-      : match[2] ? "json-string"
-        : match[3] ? "json-number"
-          : match[4] ? "json-boolean"
-            : match[5] ? "json-null"
-              : "";
-    if (!tokenClass) {
-      pre.append(document.createTextNode(match[0]));
-      continue;
-    }
-    const token = document.createElement("span");
-    token.className = tokenClass;
-    token.textContent = match[0];
-    pre.append(token);
-  }
-  return pre;
-}
-
-function highlightResponseMatches(container, term) {
-  const normalizedTerm = term.trim().toLocaleLowerCase();
-  if (!normalizedTerm) return 0;
-
-  const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
-  const textNodes = [];
-  while (walker.nextNode()) textNodes.push(walker.currentNode);
-
-  let matchCount = 0;
-  for (const textNode of textNodes) {
-    const text = textNode.nodeValue;
-    const lowerText = text.toLocaleLowerCase();
-    let offset = 0;
-    const fragment = document.createDocumentFragment();
-    let matchIndex = lowerText.indexOf(normalizedTerm, offset);
-    if (matchIndex < 0) continue;
-
-    while (matchIndex >= 0) {
-      if (matchIndex > offset) fragment.append(document.createTextNode(text.slice(offset, matchIndex)));
-      const mark = document.createElement("mark");
-      mark.className = "response-match";
-      mark.textContent = text.slice(matchIndex, matchIndex + normalizedTerm.length);
-      fragment.append(mark);
-      matchCount += 1;
-      offset = matchIndex + normalizedTerm.length;
-      matchIndex = lowerText.indexOf(normalizedTerm, offset);
-    }
-    if (offset < text.length) fragment.append(document.createTextNode(text.slice(offset)));
-    textNode.replaceWith(fragment);
-  }
-  return matchCount;
-}
-
-function formatRawJson(text) {
-  try {
-    return { text: JSON.stringify(JSON.parse(text), null, 2), isJson: true };
-  } catch {
-    return { text, isJson: false };
-  }
-}
-
 function renderDecodedRequestBody(text, key, method) {
   const decoded = decodeResponse(text, key, { method });
   const decodedText = decoded.isJson ? JSON.stringify(decoded.value, null, 2) : decoded.text;
@@ -476,37 +196,6 @@ function renderDecodedRequestBody(text, key, method) {
   heading.textContent = "Decoded Request Body";
   section.append(heading, createCodeView(decodedText, decoded.isJson));
   return section;
-}
-
-function addSection(container, title) {
-  const section = document.createElement("section");
-  section.className = "detail-section";
-  const heading = document.createElement("h2");
-  heading.className = "section-title";
-  heading.textContent = title;
-  section.append(heading);
-  container.append(section);
-  return section;
-}
-
-function addRows(container, rows) {
-  const list = document.createElement("div");
-  list.className = "kv-list";
-  for (const [key, value] of rows) {
-    const row = document.createElement("div");
-    row.className = "kv-row";
-    const name = document.createElement("span");
-    name.className = "kv-key";
-    name.textContent = key;
-    const content = document.createElement("span");
-    content.className = "kv-value";
-    content.textContent = value !== null && typeof value === "object"
-      ? JSON.stringify(value, null, 2)
-      : String(value ?? "");
-    row.append(name, content);
-    list.append(row);
-  }
-  container.append(list);
 }
 
 function renderHeaders(record) {
@@ -560,7 +249,7 @@ function renderPayload(record) {
     const section = addSection(detailContent, "Form Data");
     addRows(section, postData.params.map((item) => [
       item.name,
-      rawMode ? item.value || "(binary)" : decodeDataValue(item.value || "(binary)", key, { method }).value,
+      rawMode ? item.value ?? "(binary)" : decodeDataValue(item.value ?? "(binary)", key, { method }).value,
     ]));
   } else if (typeof postData?.text === "string") {
     const section = addSection(detailContent, "Request Payload");
@@ -572,62 +261,12 @@ function renderPayload(record) {
   if (!url.search && !postData) detailContent.append(createNote("此请求没有 Payload"));
 }
 
-function createNote(text) {
-  const note = document.createElement("div");
-  note.className = "empty-note";
-  if (!isProfessionalLayout() || !text) {
-    note.textContent = text;
-    return note;
-  }
-  const isLoading = /^正在/.test(text);
-  const isError = /无法|错误|失败|超时|不支持|禁止/.test(text);
-  note.classList.add(isLoading ? "loading" : isError ? "error" : "empty");
-  const icon = document.createElement("span");
-  icon.className = "empty-note-icon";
-  icon.setAttribute("aria-hidden", "true");
-  icon.textContent = isLoading ? "◌" : isError ? "!" : "—";
-  const message = document.createElement("span");
-  message.textContent = text;
-  note.append(icon, message);
-  return note;
-}
-
-function setButtonLabel(button, icon, label) {
-  const iconElement = document.createElement("span");
-  iconElement.className = "button-icon";
-  iconElement.setAttribute("aria-hidden", "true");
-  iconElement.textContent = icon;
-  button.replaceChildren(iconElement, document.createTextNode(label));
-}
-
 function responseFor(record) {
-  if (record.bodyError) return null;
-  if (!record.bodyReady) return null;
-  if (isBinaryResponse(record)) {
-    const mimeType = responseMimeType(record.entry) || "application/octet-stream";
-    return {
-      value: null,
-      text: "",
-      isJson: false,
-      isBinary: true,
-      mimeType,
-      decrypted: false,
-      label: `二进制 · ${mimeType}`,
-    };
-  }
-  if (rawMode) {
-    const text = record.bodyText || "";
-    try {
-      return { value: JSON.parse(text), text, isJson: true, decrypted: false, label: "原始响应" };
-    } catch {
-      return { value: text, text, isJson: false, decrypted: false, label: "原始响应" };
-    }
-  }
-  record.decoded ??= decodeResponse(record.bodyText || "", configuredAesKey(), {
+  return decodeRecordResponse(record, {
+    rawMode,
+    key: configuredAesKey(),
     method: configuredEncryptionMethod(),
-    encryption: responseEncryption(record.entry),
   });
-  return record.decoded;
 }
 
 function searchableResponseText(record) {
@@ -703,228 +342,9 @@ function renderResponseState(record) {
   responseState.classList.toggle("decrypted", Boolean(decoded?.decrypted));
 }
 
-function previewPrimitive(value) {
-  if (value === null) return "null";
-  if (typeof value === "string") return JSON.stringify(value);
-  return String(value);
-}
-
-function previewValue(value) {
-  if (Array.isArray(value)) return value.length ? "[…]" : "[]";
-  if (value !== null && typeof value === "object") {
-    const entries = Object.entries(value);
-    const preview = entries.slice(0, 5).map(([name, item]) => [
-      `${name}: `,
-      item !== null && typeof item === "object"
-        ? previewValue(item)
-        : previewPrimitive(item),
-    ].join(""));
-    if (entries.length > 5) preview.push("…");
-    return `{${preview.join(", ")}}`;
-  }
-  return previewPrimitive(value);
-}
-
-function renderPreviewValue(value, key, depth = 0) {
-  if (value !== null && typeof value === "object") {
-    const entries = Array.isArray(value)
-      ? value.map((item, index) => [String(index), item])
-      : Object.entries(value);
-    const details = document.createElement("details");
-    details.open = depth === 0 || (depth === 1 && Array.isArray(value));
-    const summary = document.createElement("summary");
-    summary.textContent = key === null ? previewValue(value) : `${key}: ${previewValue(value)}`;
-    details.append(summary);
-
-    if (depth >= 16) {
-      const leaf = document.createElement("div");
-      leaf.className = "tree-leaf";
-      leaf.textContent = JSON.stringify(value);
-      details.append(leaf);
-      return details;
-    }
-
-    for (const [childKey, childValue] of entries) {
-      details.append(renderPreviewValue(childValue, childKey, depth + 1));
-    }
-    return details;
-  }
-
-  const row = document.createElement("div");
-  row.className = "tree-leaf";
-  if (key !== null) {
-    const name = document.createElement("span");
-    name.className = "tree-key";
-    name.textContent = `${key}: `;
-    row.append(name);
-  }
-  const content = document.createElement("span");
-  const type = value === null ? "null" : typeof value;
-  content.className = `tree-value ${type}`;
-  content.textContent = value === null ? "null" : typeof value === "string" ? JSON.stringify(value) : String(value);
-  row.append(content);
-  return row;
-}
-
 function tabularDataFor(record) {
   const decoded = responseFor(record);
   return decoded?.isJson ? findTabularData(decoded.value) : null;
-}
-
-function addTableColumnResizer(header) {
-  const resizer = document.createElement("span");
-  resizer.className = "table-column-resizer";
-  resizer.tabIndex = 0;
-  resizer.setAttribute("role", "separator");
-  resizer.setAttribute("aria-orientation", "vertical");
-  resizer.setAttribute("aria-label", `调整 ${header.textContent} 列宽`);
-
-  const setWidth = (width) => {
-    const nextWidth = Math.max(72, Math.round(width));
-    header.style.width = `${nextWidth}px`;
-    header.style.minWidth = `${nextWidth}px`;
-    resizer.setAttribute("aria-valuenow", String(nextWidth));
-  };
-  resizer.addEventListener("pointerdown", (event) => {
-    if (event.button !== 0) return;
-    resizer.setPointerCapture(event.pointerId);
-    document.body.classList.add("is-table-resizing");
-    resizer.dataset.startX = String(event.clientX);
-    resizer.dataset.startWidth = String(header.getBoundingClientRect().width);
-    event.preventDefault();
-  });
-  resizer.addEventListener("pointermove", (event) => {
-    if (!resizer.hasPointerCapture(event.pointerId)) return;
-    setWidth(Number(resizer.dataset.startWidth) + event.clientX - Number(resizer.dataset.startX));
-  });
-  const finishResize = () => document.body.classList.remove("is-table-resizing");
-  resizer.addEventListener("pointerup", finishResize);
-  resizer.addEventListener("pointercancel", finishResize);
-  resizer.addEventListener("lostpointercapture", finishResize);
-  resizer.addEventListener("keydown", (event) => {
-    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
-    event.preventDefault();
-    setWidth(header.getBoundingClientRect().width + (event.key === "ArrowLeft" ? -12 : 12));
-  });
-  header.append(resizer);
-}
-
-function createTableCell(value) {
-  const cell = document.createElement("td");
-  const text = formatTableCell(value);
-  if (!isProfessionalLayout() || text.length <= 80) {
-    cell.textContent = text;
-    return cell;
-  }
-  const button = document.createElement("button");
-  button.type = "button";
-  button.className = "table-cell-preview";
-  button.textContent = text;
-  button.title = "查看完整内容";
-  button.addEventListener("click", () => {
-    tableCellValue.textContent = text;
-    tableCellDialog.showModal();
-  });
-  cell.append(button);
-  return cell;
-}
-
-function renderTableTab(record) {
-  const tableData = tabularDataFor(record);
-  if (!tableData) {
-    detailContent.append(createNote("此接口没有可展示为表格的字典列表"));
-    return;
-  }
-
-  const columns = [];
-  const columnSet = new Set();
-  for (const row of tableData.rows) {
-    for (const key of Object.keys(row)) {
-      if (!columnSet.has(key)) {
-        columnSet.add(key);
-        columns.push(key);
-      }
-    }
-  }
-
-  const summary = document.createElement("div");
-  summary.className = "table-summary";
-  summary.textContent = `${tableData.path} · ${tableData.rows.length} 条`;
-  detailContent.append(summary);
-
-  if (!columns.length) {
-    detailContent.append(createNote("列表中的对象没有可展示字段"));
-    return;
-  }
-
-  const table = document.createElement("table");
-  table.className = "data-table";
-  const thead = document.createElement("thead");
-  const headerRow = document.createElement("tr");
-  const indexHeader = document.createElement("th");
-  indexHeader.className = "table-index";
-  indexHeader.scope = "col";
-  indexHeader.textContent = "序号";
-  if (isProfessionalLayout()) addTableColumnResizer(indexHeader);
-  headerRow.append(indexHeader);
-  for (const column of columns) {
-    const cell = document.createElement("th");
-    cell.scope = "col";
-    cell.textContent = column;
-    if (isProfessionalLayout()) addTableColumnResizer(cell);
-    headerRow.append(cell);
-  }
-  thead.append(headerRow);
-
-  const tbody = document.createElement("tbody");
-  for (const [index, row] of tableData.rows.entries()) {
-    const tableRow = document.createElement("tr");
-    const indexCell = document.createElement("td");
-    indexCell.className = "table-index";
-    indexCell.textContent = String(index + 1);
-    tableRow.append(indexCell);
-    for (const column of columns) {
-      tableRow.append(createTableCell(row[column]));
-    }
-    tbody.append(tableRow);
-  }
-
-  table.append(thead, tbody);
-  detailContent.append(table);
-  const matchCount = highlightResponseMatches(table, responseSearchTerm);
-  responseSearchCount.textContent = responseSearchTerm.trim() ? `${matchCount} 个匹配` : "";
-}
-
-function renderBinaryPreview(record, decoded) {
-  const source = `data:${decoded.mimeType};base64,${record.bodyBase64}`;
-  const container = document.createElement("div");
-  container.className = "binary-preview";
-
-  if (decoded.mimeType.startsWith("image/")) {
-    const image = document.createElement("img");
-    image.src = source;
-    image.alt = `${decoded.mimeType} 响应预览`;
-    container.append(image);
-  } else if (decoded.mimeType.startsWith("audio/")) {
-    const audio = document.createElement("audio");
-    audio.controls = true;
-    audio.src = source;
-    container.append(audio);
-  } else if (decoded.mimeType.startsWith("video/")) {
-    const video = document.createElement("video");
-    video.controls = true;
-    video.src = source;
-    container.append(video);
-  } else if (decoded.mimeType === "application/pdf") {
-    const frame = document.createElement("iframe");
-    frame.title = "PDF 响应预览";
-    frame.src = source;
-    container.append(frame);
-  } else {
-    container.append(createNote(`${decoded.mimeType} 是二进制响应，Chrome 在 Preview 中提供文件预览。`));
-  }
-
-  return container;
 }
 
 function renderBodyTab(record, tab) {
@@ -973,38 +393,6 @@ function renderBodyTab(record, tab) {
   }
 }
 
-function createSqlView(sql) {
-  const fragment = document.createDocumentFragment();
-  const tokens = /(\/\*[\s\S]*?\*\/|--[^\r\n]*|(?:'(?:''|\\.|[^'\\])*'|"(?:""|\\.|[^"\\])*"|`(?:``|[^`])*`)|\b\d+(?:\.\d+)?\b|[A-Za-z_][A-Za-z0-9_$]*|<=|>=|<>|!=|:=|[-+*/%=<>])/g;
-  let offset = 0;
-  for (const match of sql.matchAll(tokens)) {
-    if (match.index > offset) fragment.append(document.createTextNode(sql.slice(offset, match.index)));
-    const token = match[0];
-    const span = document.createElement("span");
-    const upper = token.toUpperCase();
-    span.className = token.startsWith("--") || token.startsWith("/*") ? "sql-comment"
-      : token.startsWith("'") ? "sql-string"
-        : /^\d/.test(token) ? "sql-number"
-          : SQL_KEYWORDS.has(upper) ? "sql-keyword"
-            : /^["`A-Za-z_]/.test(token) ? "sql-identifier"
-              : "sql-operator";
-    span.textContent = token;
-    fragment.append(span);
-    offset = match.index + token.length;
-  }
-  if (offset < sql.length) fragment.append(document.createTextNode(sql.slice(offset)));
-  const view = document.createElement("pre");
-  view.className = "code-view";
-  view.append(fragment);
-  return view;
-}
-
-function explainRequestUrl(requestUrl) {
-  const url = new URL(requestUrl);
-  url.searchParams.set("isExplain", "true");
-  return url.href;
-}
-
 function confirmSqlReplay(record) {
   const request = record.entry.request;
   const method = String(request.method || "GET").toUpperCase();
@@ -1018,84 +406,6 @@ function confirmSqlReplay(record) {
       { once: true },
     );
     sqlConfirmDialog.showModal();
-  });
-}
-
-function requestExplainSql(record) {
-  const unavailableReason = sqlUnavailableReasonFor(record);
-  if (unavailableReason) throw new Error(unavailableReason);
-
-  const request = record.entry.request;
-
-  const method = String(request.method || "GET").toUpperCase();
-  const postData = request.postData;
-  if (postData?.params?.some((param) => param.fileName)) {
-    throw new Error("当前请求包含无法从 DevTools 记录中重放的文件内容。");
-  }
-  if (postData && typeof postData.text !== "string" && postData.params?.length) {
-    throw new Error("当前请求的表单 body 不完整，无法保证参数一致。");
-  }
-
-  const excludedHeaders = /^(accept-encoding|connection|content-length|cookie|host|origin|referer|sec-|:)/i;
-  const headers = (request.headers || []).filter(({ name }) => name && !excludedHeaders.test(name))
-    .map(({ name, value }) => [name, value]);
-  const config = {
-    url: explainRequestUrl(request.url),
-    method,
-    headers,
-    body: ["GET", "HEAD"].includes(method) ? null : (postData?.text ?? null),
-  };
-  const key = `__niuniuExplain_${crypto.randomUUID().replaceAll("-", "")}`;
-  const configLiteral = JSON.stringify(JSON.stringify(config));
-  const tokenLiteral = JSON.stringify(key);
-  const expression = `(() => { const key = ${tokenLiteral}; const config = JSON.parse(${configLiteral}); const controller = new AbortController(); const timeout = window.setTimeout(() => controller.abort(), 60000); window[key] = { done: false, controller, timeout }; fetch(config.url, { method: config.method, headers: config.headers, body: config.body, credentials: "include", signal: controller.signal }).then(async response => { const current = window[key]; if (!current) return; window.clearTimeout(current.timeout); window[key] = { done: true, ok: response.ok, status: response.status, encryption: response.headers.get("X-Data-Encrypted") || "", text: await response.text() }; }).catch(error => { const current = window[key]; if (!current) return; window.clearTimeout(current.timeout); window[key] = { done: true, error: error?.name === "AbortError" ? "解释请求超时，请检查接口响应或页面跨域策略。" : String(error) }; }); return true; })()`;
-  const pollExpression = `(() => { const result = window[${tokenLiteral}]; if (!result) return null; if (!result.done) return { done: false }; delete window[${tokenLiteral}]; return result; })()`;
-  const cleanupExpression = `(() => { const result = window[${tokenLiteral}]; if (result?.timeout) window.clearTimeout(result.timeout); result?.controller?.abort(); delete window[${tokenLiteral}]; return true; })()`;
-
-  return new Promise((resolve, reject) => {
-    let settled = false;
-    let pollTimer = null;
-    const watchdog = window.setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      if (pollTimer !== null) window.clearTimeout(pollTimer);
-      try {
-        chrome.devtools.inspectedWindow.eval(cleanupExpression, () => {});
-      } catch {
-        // The inspected page may have navigated while the request was running.
-      }
-      reject(new Error("解释请求超时，请检查接口响应或页面跨域策略。"));
-    }, 65000);
-    const finish = (callback) => {
-      if (settled) return;
-      settled = true;
-      window.clearTimeout(watchdog);
-      if (pollTimer !== null) window.clearTimeout(pollTimer);
-      callback();
-    };
-
-    chrome.devtools.inspectedWindow.eval(expression, (started, exception) => {
-      if (exception || !started) {
-        finish(() => reject(new Error(exception?.value || exception?.description || "无法在当前页面启动解释请求。")));
-        return;
-      }
-      const poll = () => chrome.devtools.inspectedWindow.eval(
-        pollExpression,
-        (result, pollException) => {
-          if (pollException) {
-            finish(() => reject(new Error("无法读取解释请求结果；页面可能已导航。")));
-          }
-          else if (result?.done) {
-            finish(() => {
-              if (result.error) reject(new Error(`解释请求失败：${result.error}`));
-              else if (!result.ok) reject(new Error(`解释接口返回 HTTP ${result.status}：${result.text.slice(0, 300)}`));
-              else resolve({ text: result.text, encryption: result.encryption });
-            });
-          } else if (!settled) pollTimer = window.setTimeout(poll, 150);
-        },
-      );
-      poll();
-    });
   });
 }
 
@@ -1119,7 +429,9 @@ function renderSqlTab(record) {
     record.sqlError = "";
     renderDetails();
     try {
-      const explainResponse = await requestExplainSql(record);
+      const reason = sqlUnavailableReasonFor(record);
+      if (reason) throw new Error(reason);
+      const explainResponse = await requestExplainSql(record.entry.request);
       const decodedSql = decodeResponse(explainResponse.text, configuredAesKey(), {
         method: configuredEncryptionMethod(),
         encryption: explainResponse.encryption || responseEncryption(record.entry),
@@ -1196,7 +508,10 @@ function renderDetails() {
   detailContent.replaceChildren();
   if (activeTab === "headers") renderHeaders(record);
   else if (activeTab === "payload") renderPayload(record);
-  else if (activeTab === "table") renderTableTab(record);
+  else if (activeTab === "table") {
+    const matchCount = renderTableTab(detailContent, tabularDataFor(record), responseSearchTerm);
+    responseSearchCount.textContent = responseSearchTerm.trim() ? `${matchCount || 0} 个匹配` : "";
+  }
   else if (activeTab === "sql") renderSqlTab(record);
   else renderBodyTab(record, activeTab);
 
@@ -1235,7 +550,12 @@ globalSearchInput.addEventListener("keydown", (event) => {
 globalSearchResults.addEventListener("click", (event) => {
   const result = event.target.closest("[data-id]");
   if (!result) return;
-  selectedId = Number(result.dataset.id);
+  const record = records.find((item) => item.id === Number(result.dataset.id));
+  if (!record) return;
+  // A global-search result must be visible even when the list has local filters.
+  searchInput.value = "";
+  if (!requestMatchesFilter(record.entry)) setRequestFilter("all");
+  selectedId = record.id;
   activeTab = "response";
   responseSearchTerm = result.dataset.responseMatch === "true" ? globalSearchInput.value.trim() : "";
   globalSearchDialog.close();
@@ -1250,14 +570,18 @@ reloadPageButton.addEventListener("click", () => {
     // Keep the panel usable in test harnesses without the DevTools API.
   }
 });
+function setRequestFilter(filter) {
+  requestFilter = filter;
+  for (const button of requestFilterButtons) {
+    const active = button.dataset.requestFilter === filter;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-pressed", String(active));
+  }
+}
+
 for (const button of requestFilterButtons) {
   button.addEventListener("click", () => {
-    requestFilter = button.dataset.requestFilter || "fetch-xhr";
-    for (const filterButton of requestFilterButtons) {
-      const active = filterButton === button;
-      filterButton.classList.toggle("active", active);
-      filterButton.setAttribute("aria-pressed", String(active));
-    }
+    setRequestFilter(button.dataset.requestFilter || "fetch-xhr");
     renderList();
     renderDetails();
   });
@@ -1288,144 +612,23 @@ responseSearchClear.addEventListener("click", () => {
   renderDetails();
 });
 
-resizeDivider.addEventListener("pointerdown", (event) => {
-  if (event.button !== 0) return;
-  resizeDivider.setPointerCapture(event.pointerId);
-  document.body.classList.add("is-resizing");
-  applySidebarWidth(event.clientX - workspace.getBoundingClientRect().left);
-  event.preventDefault();
-});
-resizeDivider.addEventListener("pointermove", (event) => {
-  if (!resizeDivider.hasPointerCapture(event.pointerId)) return;
-  applySidebarWidth(event.clientX - workspace.getBoundingClientRect().left);
-});
-function finishSidebarResize() {
-  document.body.classList.remove("is-resizing");
-  const width = Math.round(requestSidebar.getBoundingClientRect().width);
-  if (isProfessionalLayout()) {
-    try {
-      localStorage.setItem(PROFESSIONAL_SIDEBAR_WIDTH_STORAGE_KEY, String(width));
-    } catch {
-      // Resizing remains available when local storage is unavailable.
-    }
-  }
-}
-resizeDivider.addEventListener("pointerup", finishSidebarResize);
-resizeDivider.addEventListener("pointercancel", finishSidebarResize);
-resizeDivider.addEventListener("lostpointercapture", finishSidebarResize);
-resizeDivider.addEventListener("keydown", (event) => {
-  if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
-  event.preventDefault();
-  const direction = event.key === "ArrowLeft" ? -16 : 16;
-  applySidebarWidth(requestSidebar.getBoundingClientRect().width + direction);
-  finishSidebarResize();
-});
-window.addEventListener("resize", () => applySidebarWidth(requestSidebar.getBoundingClientRect().width));
-applySidebarWidth(configuredProfessionalSidebarWidth() || workspace.getBoundingClientRect().width * 0.3);
-
 rawModeToggle.addEventListener("change", () => {
   rawMode = rawModeToggle.checked;
-  renderDetails();
-});
-
-themeToggleButton.addEventListener("click", () => {
-  const nextTheme = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
-  try {
-    localStorage.setItem(THEME_STORAGE_KEY, nextTheme);
-  } catch {
-    // The toggle remains usable for the current panel session.
-  }
-  applyTheme(nextTheme);
-  applyThemeLayout();
-});
-
-openSettingsButton.addEventListener("click", () => {
-  settingsMethod.value = configuredEncryptionMethod();
-  settingsKey.value = configuredAesKey();
-  settingsSqlBlockedMarkers.value = configuredSqlBlockedMarkers().join("\n");
-  updateEncryptionSettings();
-  settingsError.hidden = true;
-  settingsDialog.showModal();
-});
-
-settingsMethod.addEventListener("change", () => {
-  settingsError.hidden = true;
-  updateEncryptionSettings();
-});
-requestListModeToggle.addEventListener("click", () => {
-  if (!isProfessionalLayout()) return;
-  const previousMode = document.documentElement.dataset.requestListMode;
-  const nextMode = document.documentElement.dataset.requestListMode === "minimal" ? "detailed" : "minimal";
-  try {
-    localStorage.setItem(PROFESSIONAL_LIST_MODE_STORAGE_KEY, nextMode);
-  } catch {
-    // The toggle remains usable for the current panel session.
-  }
-  resizeSidebarForRequestListMode(previousMode, nextMode);
-  document.documentElement.dataset.requestListMode = nextMode;
-  updateRequestListModeToggle();
   renderList();
   renderDetails();
-});
-
-cancelSettingsButton.addEventListener("click", () => settingsDialog.close());
-resetDefaultKeyButton.addEventListener("click", () => {
-  try {
-    localStorage.removeItem(AES_KEY_STORAGE_KEY);
-    localStorage.removeItem(ENCRYPTION_METHOD_STORAGE_KEY);
-    localStorage.removeItem(THEME_STORAGE_KEY);
-    localStorage.removeItem(SQL_BLOCKED_MARKERS_STORAGE_KEY);
-    localStorage.removeItem(PROFESSIONAL_LIST_MODE_STORAGE_KEY);
-    localStorage.removeItem(PROFESSIONAL_SIDEBAR_WIDTH_STORAGE_KEY);
-  } catch {
-    settingsError.textContent = "无法恢复默认设置，请检查浏览器的扩展存储设置。";
-    settingsError.hidden = false;
-    return;
-  }
-
-  settingsMethod.value = DEFAULT_ENCRYPTION_METHOD;
-  settingsKey.value = DEFAULT_AES_KEY;
-  settingsSqlBlockedMarkers.value = DEFAULT_SQL_BLOCKED_MARKERS.join("\n");
-  updateEncryptionSettings();
-  invalidateDecodedRecords();
-  applyTheme(configuredTheme());
-  applyThemeLayout();
-  settingsDialog.close();
-});
-settingsForm.addEventListener("submit", (event) => {
-  event.preventDefault();
-  const method = getEncryptionMethod(settingsMethod.value).value;
-  const key = settingsKey.value;
-  const keyLength = new TextEncoder().encode(key).length;
-  const config = getEncryptionMethod(method);
-  if (config.keyLengths.length > 0 && !config.keyLengths.includes(keyLength)) {
-    settingsError.textContent = `${config.label} 的密钥 UTF-8 长度必须为 ${config.keyLengths.join("、")} 字节。`;
-    settingsError.hidden = false;
-    return;
-  }
-
-  try {
-    localStorage.setItem(AES_KEY_STORAGE_KEY, key);
-    localStorage.setItem(ENCRYPTION_METHOD_STORAGE_KEY, method);
-    localStorage.setItem(
-      SQL_BLOCKED_MARKERS_STORAGE_KEY,
-      parseSqlBlockedMarkers(settingsSqlBlockedMarkers.value).join("\n"),
-    );
-  } catch {
-    settingsError.textContent = "无法保存设置，请检查浏览器的扩展存储设置。";
-    settingsError.hidden = false;
-    return;
-  }
-
-  invalidateDecodedRecords();
-  settingsDialog.close();
 });
 
 function addRequest(entry, options = {}) {
   const identity = requestIdentity(entry);
   if (records.some((record) => record.identity === identity)) return;
   const record = createRecord(entry, identity);
-  loadLiveContent(record, entry);
+  let loading = true;
+  loadLiveContent(record, entry, () => {
+    if (loading || !records.includes(record)) return;
+    renderList();
+    if (record.id === selectedId) renderDetails();
+  });
+  loading = false;
   if (options.render !== false) {
     renderList();
     renderDetails();
@@ -1438,9 +641,10 @@ chrome.devtools.network.onNavigated.addListener(clearRecords);
 function loadExistingRequests() {
   if (typeof chrome.devtools.network.getHAR !== "function") return;
 
+  const generation = captureGeneration;
   let handled = false;
   const handleHar = (harLog) => {
-    if (handled) return;
+    if (handled || generation !== captureGeneration) return;
     handled = true;
     for (const entry of harLog?.entries || []) addRequest(entry, { render: false });
     if (records.length && selectedId === null) selectedId = records[0].id;
@@ -1450,12 +654,16 @@ function loadExistingRequests() {
 
   try {
     const result = chrome.devtools.network.getHAR(handleHar);
-    result?.catch?.(() => {});
-    result?.then?.(handleHar);
+    result?.then?.(handleHar, () => {});
   } catch {
     // Live request capture remains available when HAR retrieval is unsupported.
   }
 }
 
+initializeSettings(() => {
+  invalidateDecodedRecords();
+  renderList();
+  renderDetails();
+});
 renderList();
 loadExistingRequests();

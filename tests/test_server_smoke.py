@@ -65,6 +65,12 @@ class TestServerSmokeTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("-- mock cookie received: yes", sql)
         self.assertNotIn("secret", sql)
 
+    async def test_table_route_supports_sql_explain(self):
+        status, headers, body = await request("GET", "/api/table", "source=smoke&isExplain=true")
+        self.assertEqual(status, 200)
+        self.assertEqual(headers.get(b"x-test-mode"), b"sql-explain")
+        self.assertIn("SELECT", json.loads(body)["data"][0]["sql"])
+
     async def test_table_route_returns_direct_object_list(self):
         status, _, body = await request("GET", "/api/table", "source=smoke")
         payload = json.loads(body)

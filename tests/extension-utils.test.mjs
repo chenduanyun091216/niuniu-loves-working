@@ -107,7 +107,7 @@ test("light and dark themes share the compact professional layout", async () => 
   const [html, css, script, manifestText] = await Promise.all([
     readFile(new URL("../extension/panel.html", import.meta.url), "utf8"),
     readFile(new URL("../extension/panel.css", import.meta.url), "utf8"),
-    readFile(new URL("../extension/panel.js", import.meta.url), "utf8"),
+    readFile(new URL("../extension/panel-settings.js", import.meta.url), "utf8"),
     readFile(new URL("../extension/manifest.json", import.meta.url), "utf8"),
   ]);
 
@@ -123,9 +123,41 @@ test("light and dark themes share the compact professional layout", async () => 
   assert.doesNotMatch(html, /id="professional-settings"/);
   assert.doesNotMatch(html, /id="density-select"/);
   assert.match(css, /data-theme="light".*data-theme="dark"/s);
-  assert.match(script, /isProfessionalLayout/);
+  assert.doesNotMatch(script, /isProfessionalLayout/);
   assert.match(script, /PROFESSIONAL_SIDEBAR_WIDTH_STORAGE_KEY/);
   assert.match(script, /dataset\.density = "compact"/);
   assert.match(script, /themeToggleButton\.addEventListener/);
   assert.equal(JSON.parse(manifestText).version, "1.2.0");
+});
+
+test("popup page keeps all outer corners rounded at 15px", async () => {
+  const css = await readFile(new URL("../extension/popup.css", import.meta.url), "utf8");
+  assert.match(css, /html, body \{ border-radius: 15px;/);
+  assert.match(css, /\.popup-card \{[^}]*border-radius: 15px;/);
+});
+
+test("structured MIME suffixes are text but actual documents remain files", () => {
+  for (const mimeType of ["application/problem+json", "application/vnd.api+json; charset=UTF-8", "application/soap+xml"]) {
+    assert.equal(isTextMimeType(mimeType), true);
+    assert.equal(isFileResponse({ response: { content: { mimeType } } }), false);
+  }
+  assert.equal(isFileResponse({ response: { content: { mimeType: "application/vnd.ms-excel" } } }), true);
+  assert.equal(isTextMimeType("application/jsonp-binary"), false);
+  assert.equal(isFileResponse({ response: { content: { mimeType: "image/svg+xml" } } }), true);
+  assert.equal(isExplainRequest("https://example.test/?isExplain=false&isExplain=true"), true);
+});
+
+test("DES, 3DES, nested JSON and explicit AES headers keep decoding correctly", () => {
+  for (const [method, cipher, key] of [
+    ["des-ecb", window.CryptoJS.DES, "12345678"],
+    ["3des-ecb", window.CryptoJS.TripleDES, "123456781234567812345678"],
+  ]) {
+    const encrypted = cipher.encrypt('{"ok":true}', window.CryptoJS.enc.Utf8.parse(key), {
+      mode: window.CryptoJS.mode.ECB, padding: window.CryptoJS.pad.Pkcs7,
+    }).ciphertext.toString(window.CryptoJS.enc.Base64);
+    assert.deepEqual(decodeResponse(encrypted, key, { method }).value, { ok: true });
+  }
+  const encrypted = encryptAes({ ok: true });
+  assert.deepEqual(decodeResponse(encrypted, DEFAULT_AES_KEY, { method: "base64", encryption: "AES" }).value, { ok: true });
+  assert.deepEqual(decodeResponse('{"params":"{\\"value\\":\\"MT0x\\"}"}').value, { params: { value: "1=1" } });
 });

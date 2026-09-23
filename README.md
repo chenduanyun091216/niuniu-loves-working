@@ -18,7 +18,7 @@ Payload 面板会尝试解密 Query、Form Data 和 JSON 请求体中的密文�
 
 接口列表使用 Chrome Network 风格的名称和类型图标；可拖动列表与详情之间的分隔线调整宽度。Payload 和 Response 中的 JSON 会格式化并进行语法着色，原始模式仍保留密文和 Base64 字段值。
 
-当解码后的 JSON 中包含适合展示的对象列表时，详情区域会自动显示「表格」页签，不依赖固定字段名；表格页签支持与 Response 一致的搜索、高亮和匹配计数。图片、音视频、字体、PDF、压缩包、Office 和附件下载等文件类响应不会显示「获取 SQL」。设置中可配置禁止获取 SQL 的接口标识，默认包含 `make_new`、`make_update`、`make_remove`；接口 URL 命中任一标识，或原请求已包含 `isExplain=true` 时，会直接禁用「获取 SQL」。其他接口点击「获取 SQL」后会显示实际追加 `isExplain=true` 的完整接口地址，并用红色文字提示不要对写操作接口执行重放。
+当解码后的 JSON 中包含适合展示的对象列表时，详情区域会自动显示「表格」页签，不依赖固定字段名；表格页签支持与 Response 一致的搜索、高亮和匹配计数。图片、音视频、字体、PDF、压缩包、Office 和附件下载等文件类响应不会显示「获取 SQL」。设置中可配置禁止获取 SQL 的接口标识，默认包含 `make_new`、`make_update`、`make_remove`、`nonsense`；接口 URL 命中任一标识，或原请求已包含 `isExplain=true` 时，会直接禁用「获取 SQL」。其他接口点击「获取 SQL」后会显示实际追加 `isExplain=true` 的完整接口地址，并用红色文字提示不要对写操作接口执行重放。
 
 作者：Mr.Chen
 
@@ -41,9 +41,30 @@ python -m pip install -r test_server/requirements-test.txt
 提交改动前可运行以下自动回归：
 
 ```bash
-node --test tests/extension-utils.test.mjs
+node --test tests/*.test.mjs
 .venv/bin/python -m unittest discover -s tests -p 'test_*.py'
 ```
+
+浏览器交互回归加载真实的 `panel.html` 和全部模块，仅替换 DevTools API 与本地存储，不改扩展配置。运行：
+
+```bash
+.venv/bin/python tests/serve_browser.py
+```
+
+打开 `http://127.0.0.1:8765/tests/panel-browser.html`，等待页面显示全部通过且无运行错误。此服务禁用缓存，修改模块后可直接刷新。它覆盖筛选、搜索、解码配置、异步正文、HAR、表格和亮暗主题；真实扩展仍需在 Chrome 扩展管理页重新加载，再通过本地测试站验证 DevTools API。
+
+## 代码结构
+
+- `extension/panel.js`：请求列表、详情页签与事件协调。
+- `extension/panel-settings.js`：解密配置、主题、列表模式和分栏宽度。
+- `extension/panel-response.js`：DevTools 正文读取、编码处理和响应缓存。
+- `extension/panel-views.js`、`panel-table.js`：内容渲染、语法高亮、搜索标记和表格交互。
+- `extension/sql-replay.js`：检查页面内的请求重放、轮询、超时和异常清理。
+- `extension/*-utils.js`：网络元数据、递归解码、SQL 和表格识别规则。
+
+此次重构与验证边界见 [重构验收记录](docs/refactor-validation.md)。
+
+## 发布包
 
 测试通过后，从项目根目录重新生成发布包：
 

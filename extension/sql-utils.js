@@ -2,6 +2,7 @@ export const DEFAULT_SQL_BLOCKED_MARKERS = Object.freeze([
   "make_new",
   "make_update",
   "make_remove",
+  "nonsense",
 ]);
 
 export function parseSqlBlockedMarkers(value) {

@@ -1,5 +1,5 @@
 export function responseHeader(entry, name) {
-  return entry.response?.headers?.find((item) => (item.name || "").toLowerCase() === name)?.value || "";
+  return entry.response?.headers?.find((item) => (item.name || "").toLowerCase() === name.toLowerCase())?.value || "";
 }
 
 export function responseMimeType(entry) {
@@ -42,14 +42,16 @@ export function requestName(url) {
 
 export function isExplainRequest(url) {
   try {
-    return new URL(url).searchParams.get("isExplain") === "true";
+    return new URL(url).searchParams.getAll("isExplain").includes("true");
   } catch {
     return false;
   }
 }
 
 export function isTextMimeType(mimeType) {
-  return /^(text\/|application\/(json|javascript|xml|graphql|x-www-form-urlencoded)|image\/svg\+xml)/i.test(mimeType);
+  const type = mimeType.split(";", 1)[0].trim();
+  return /^(text\/|application\/(json|javascript|xml|graphql|x-www-form-urlencoded)$|image\/svg\+xml$)/i.test(type)
+    || /\+(json|xml)$/i.test(type);
 }
 
 export function isFileResponse(entry) {
@@ -58,6 +60,7 @@ export function isFileResponse(entry) {
   if (/\battachment\b/i.test(responseHeader(entry, "content-disposition"))) return true;
 
   const mimeType = responseMimeType(entry);
+  if (/^application\/[^;]+\+(json|xml)(?:\s*;|$)/i.test(mimeType)) return false;
   return /^(image|audio|video|font)\//.test(mimeType)
     || /^(text\/(csv|tab-separated-values)|application\/(octet-stream|pdf|zip|gzip|x-7z-compressed|x-rar-compressed|msword|vnd\.))/.test(mimeType);
 }
