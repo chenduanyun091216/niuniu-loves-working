@@ -75,6 +75,14 @@
         <button class="run-button" data-run="base64" type="button">发送 POST 请求</button>
       </article>
 
+      <article class="endpoint-card featured">
+        <div class="card-heading"><span class="method post">POST</span><span class="endpoint-kind encrypted">转义参数</span></div>
+        <h3>Python 风格参数</h3>
+        <code>/api/loose-params</code>
+        <p>请求体包含 <code>{'tag_id': 'LTE='}</code>，验证无 JSON 双引号时的嵌套 Base64 解码。</p>
+        <button class="run-button" data-run="looseParams" type="button">发送 POST 请求</button>
+      </article>
+
       <article class="endpoint-card">
         <div class="card-heading"><span class="method post">POST</span><span class="endpoint-kind">Header + Payload</span></div>
         <h3>请求回显</h3>
@@ -99,6 +107,6 @@
 
     <footer>FastAPI 本地服务 · 作者 Mr.Chen</footer>
   </main>
-  <script src="/test/test.js?v=table-endpoint"></script>
+  <script src="/test/test.js?v=loose-params-endpoint"></script>
 </body>
 </html>

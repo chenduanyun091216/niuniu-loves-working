@@ -244,7 +244,7 @@ body.is-resizing { cursor: col-resize; user-select: none; }
 .data-table th, .data-table td { padding: 6px 8px; border: 1px solid var(--kv-border); text-align: left; vertical-align: middle; overflow-wrap: anywhere; }
 .data-table .table-index { width: 42px; color: var(--muted); text-align: center; white-space: nowrap; }
 .data-table th { position: sticky; z-index: 2; top: 0; color: var(--text-strong); background: var(--surface-raised); font-weight: 600; white-space: nowrap; }
-.data-table td { font: 11px/1.45 Consolas, "SFMono-Regular", Menlo, monospace; white-space: pre-wrap; }
+.data-table td { font: inherit; white-space: pre-wrap; }
 .data-table tbody tr:nth-child(even) { background: var(--kv-alt); }
 
 .detail-content[data-tab="payload"] .kv-key,
@@ -381,7 +381,7 @@ body.is-resizing { cursor: col-resize; user-select: none; }
 :root:is([data-theme="light"], [data-theme="dark"])[data-request-list-mode="minimal"] .request-list::-webkit-scrollbar { width: var(--request-list-scrollbar-width); }
 :root:is([data-theme="light"], [data-theme="dark"]) .request-method,
 :root:is([data-theme="light"], [data-theme="dark"]) .request-status,
-:root:is([data-theme="light"], [data-theme="dark"]) .request-time { overflow: hidden; color: var(--muted); font: 10px/1.35 Consolas, "SFMono-Regular", Menlo, monospace; text-overflow: ellipsis; white-space: nowrap; }
+:root:is([data-theme="light"], [data-theme="dark"]) .request-time { overflow: hidden; color: var(--muted); font: 11px/1.35 Consolas, "SFMono-Regular", Menlo, monospace; text-overflow: ellipsis; white-space: nowrap; }
 :root:is([data-theme="light"], [data-theme="dark"]) .request-method { color: var(--method-text); font-weight: 600; }
 :root:is([data-theme="light"], [data-theme="dark"]) .request-status.status-error { color: var(--error); }
 

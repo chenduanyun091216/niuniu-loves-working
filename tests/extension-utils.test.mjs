@@ -161,3 +161,12 @@ test("DES, 3DES, nested JSON and explicit AES headers keep decoding correctly", 
   assert.deepEqual(decodeResponse(encrypted, DEFAULT_AES_KEY, { method: "base64", encryption: "AES" }).value, { ok: true });
   assert.deepEqual(decodeResponse('{"params":"{\\"value\\":\\"MT0x\\"}"}').value, { params: { value: "1=1" } });
 });
+
+test("nested Python-style params decode Base64 values without executing input", () => {
+  assert.deepEqual(decodeResponse('{"params":"{\'tag_id\': \'LTE=\'}"}').value, {
+    params: { tag_id: "-1" },
+  });
+  assert.deepEqual(decodeResponse('{"params":"{\'tag\\_id\': \'LTE=\'}"}').value, {
+    params: { tag_id: "-1" },
+  });
+});

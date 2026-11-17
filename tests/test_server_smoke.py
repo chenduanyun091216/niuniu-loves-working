@@ -78,6 +78,18 @@ class TestServerSmokeTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(payload), 2)
         self.assertEqual(payload[0]["source"], "smoke")
 
+    async def test_loose_params_route_echoes_python_style_parameter(self):
+        status, _, body = await request(
+            "POST",
+            "/api/loose-params",
+            body=b'{"params":"{\'tag_id\': \'LTE=\'}"}',
+            headers=[("content-type", "application/json")],
+        )
+        payload = json.loads(body)
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["mode"], "loose-params")
+        self.assertEqual(payload["payload"]["params"], "{'tag_id': 'LTE='}")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -17,6 +17,11 @@ const requests = {
       plain: "普通文本保持原样",
     }),
   }),
+  looseParams: () => fetch("/api/loose-params", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ params: "{'tag_id': 'LTE='}" }),
+  }),
   echo: () => fetch("/api/echo?source=button", {
     method: "POST",
     headers: {
@@ -58,7 +63,7 @@ function addResult(method, url, status, text) {
 async function runRequest(name) {
   const request = requests[name];
   const button = document.querySelector(`[data-run="${name}"]`);
-  const method = ["base64", "echo"].includes(name) ? "POST" : "GET";
+  const method = ["base64", "looseParams", "echo"].includes(name) ? "POST" : "GET";
   const url = {
     plain: "/api/plain?source=button",
     table: "/api/table?source=button",
@@ -66,6 +71,7 @@ async function runRequest(name) {
     encrypted: "/api/encrypted?source=button",
     partial: "/api/partial?source=button",
     base64: "/api/base64?filter=MT0x",
+    looseParams: "/api/loose-params",
     echo: "/api/echo?source=button",
   }[name];
 

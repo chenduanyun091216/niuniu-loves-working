@@ -24,7 +24,7 @@ Payload 面板会尝试解密 Query、Form Data 和 JSON 请求体中的密文�
 
 ## 本地测试站
 
-项目包含一个 FastAPI 测试网页，可同时验证未加密 JSON、直接对象列表、PNG 二进制 Preview、整段 AES、部分字段 AES、Base64 请求/响应，以及请求 Header/Payload 的展示。
+项目包含一个 FastAPI 测试网页，可同时验证未加密 JSON、直接对象列表、PNG 二进制 Preview、整段 AES、部分字段 AES、Base64 请求/响应、Python 风格转义参数，以及请求 Header/Payload 的展示。
 
 首次安装测试站依赖时运行：
 

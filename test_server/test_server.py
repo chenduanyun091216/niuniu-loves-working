@@ -130,6 +130,21 @@ async def base64_response(
     }
 
 
+@app.post("/api/loose-params")
+async def loose_params_response(
+    request: Request,
+    payload: dict[str, Any] = Body(...),
+    is_explain: bool = Query(default=False, alias="isExplain"),
+) -> Any:
+    if is_explain:
+        return await mock_sql_explain(request)
+    return {
+        "success": True,
+        "mode": "loose-params",
+        "payload": payload,
+    }
+
+
 @app.post("/api/echo")
 async def echo_request(
     request: Request,

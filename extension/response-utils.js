@@ -49,6 +49,105 @@ function parseStructuredJson(value) {
       ? parsed
       : null;
   } catch {
+    return parseLooseStructuredValue(trimmed);
+  }
+}
+
+function parseLooseStructuredValue(source) {
+  let index = 0;
+
+  function skipWhitespace() {
+    while (/\s/.test(source[index] || "")) index += 1;
+  }
+
+  function parseString() {
+    const quote = source[index++];
+    let result = "";
+    while (index < source.length) {
+      const character = source[index++];
+      if (character === quote) return result;
+      if (character !== "\\") {
+        result += character;
+        continue;
+      }
+      const escaped = source[index++];
+      const escapes = { b: "\b", f: "\f", n: "\n", r: "\r", t: "\t", v: "\v" };
+      result += escapes[escaped] ?? escaped;
+    }
+    throw new Error("Unterminated string");
+  }
+
+  function parseValue() {
+    skipWhitespace();
+    const character = source[index];
+    if (character === "'" || character === '"') return parseString();
+    if (character === "{") return parseObject();
+    if (character === "[") return parseArray();
+
+    const token = source.slice(index).match(/^(true|false|null|True|False|None|-?(?:\d+\.?\d*|\.\d+))/)?.[0];
+    if (!token) throw new Error("Invalid value");
+    index += token.length;
+    if (token === "true" || token === "True") return true;
+    if (token === "false" || token === "False") return false;
+    if (token === "null" || token === "None") return null;
+    return Number(token);
+  }
+
+  function parseObject() {
+    const result = {};
+    index += 1;
+    skipWhitespace();
+    if (source[index] === "}") {
+      index += 1;
+      return result;
+    }
+    while (index < source.length) {
+      skipWhitespace();
+      if (source[index] !== "'" && source[index] !== '"') throw new Error("Invalid object key");
+      const key = parseString();
+      skipWhitespace();
+      if (source[index++] !== ":") throw new Error("Missing object separator");
+      Object.defineProperty(result, key, {
+        value: parseValue(),
+        enumerable: true,
+        configurable: true,
+        writable: true,
+      });
+      skipWhitespace();
+      if (source[index] === "}") {
+        index += 1;
+        return result;
+      }
+      if (source[index++] !== ",") throw new Error("Missing object delimiter");
+    }
+    throw new Error("Unterminated object");
+  }
+
+  function parseArray() {
+    const result = [];
+    index += 1;
+    skipWhitespace();
+    if (source[index] === "]") {
+      index += 1;
+      return result;
+    }
+    while (index < source.length) {
+      result.push(parseValue());
+      skipWhitespace();
+      if (source[index] === "]") {
+        index += 1;
+        return result;
+      }
+      if (source[index++] !== ",") throw new Error("Missing array delimiter");
+    }
+    throw new Error("Unterminated array");
+  }
+
+  try {
+    const parsed = parseValue();
+    skipWhitespace();
+    return index === source.length && parsed !== null && typeof parsed === "object" ? parsed : null;
+  } catch {
     return null;
   }
 }
